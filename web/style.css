@@ -157,3 +157,6 @@ pre {
 }
 .output.picking .grid figure { outline: 2px solid transparent; }
 .output.picking .grid figure:hover { outline-color: var(--accent-2); }
+
+/* Panes toggle via el.hidden, so no rule may out-specify this. */
+[hidden] { display: none !important; }
