@@ -171,12 +171,17 @@ async def api_generate(payload: dict):
 @app.post("/api/reels")
 async def api_reel(payload: dict):
     """Queue a reel. Renders locally, so it works with the desktop asleep."""
-    ids = payload.get("image_ids") or []
-    if len(ids) < 2:
+    shots = payload.get("shots")
+    if shots:
+        shots = [{"src": "ref" if s.get("src") == "ref" else "image", "id": int(s["id"])}
+                 for s in shots]
+    else:
+        shots = [{"src": "image", "id": int(i)} for i in (payload.get("image_ids") or [])]
+    if len(shots) < 2:
         raise HTTPException(400, "pick at least two stills")
     params = {
         "workflow": "reel",
-        "image_ids": [int(i) for i in ids],
+        "shots": shots,
         "bpm": float(payload["bpm"]) if payload.get("bpm") else None,
         "beats_per_shot": int(payload.get("beats_per_shot", 4)),
         "seconds": float(payload.get("seconds", 2.0)),
@@ -184,6 +189,7 @@ async def api_reel(payload: dict):
         "transition": payload.get("transition", "cut"),
         "audio_ref_id": payload.get("audio_ref_id"),
     }
+    ids = shots
     shot = reels.shot_seconds(params["bpm"], params["beats_per_shot"], params["seconds"])
     with db() as conn:
         cur = conn.execute(

@@ -153,6 +153,13 @@ the UI mirrors it.
 
 Upload music under References with kind `audio`.
 
+**Shots can come from uploaded photos, not just generated stills.** The Reel
+panel's *shots from* control switches the gallery between `renders`,
+`my photos` (image references you uploaded) and `both`. Since reels build on
+kanto, a reel made entirely from uploads needs **no GPU at all** — it works
+with the desktop switched off. Shots are addressed as `{src, id}` so the two
+sources can be mixed in any order.
+
 ### Ken Burns gotcha
 
 `zoompan`'s `d` is how many output frames each *input* frame becomes. With a

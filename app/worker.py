@@ -97,17 +97,28 @@ def _thumb(name: str):
 async def _run_reel(job: dict):
     """Assemble a reel from already-rendered stills. No render node involved."""
     params = loads(job["params"])
-    ids = params.get("image_ids") or []
+    # Shots may come from generated images or from uploaded references, mixed
+    # and in any order, so they are addressed as {src, id} rather than a bare
+    # id list. `image_ids` is still accepted for older jobs.
+    shots = params.get("shots")
+    if not shots:
+        shots = [{"src": "image", "id": i} for i in (params.get("image_ids") or [])]
+
+    paths = []
     with db() as conn:
-        rows_ = conn.execute(
-            f"SELECT * FROM images WHERE id IN ({','.join('?' * len(ids))})", ids
-        ).fetchall() if ids else []
-    # Preserve the order the user picked, which SQL's IN does not.
-    by_id = {r["id"]: r for r in rows_}
-    paths = [OUT / by_id[i]["filename"] for i in ids
-             if i in by_id and not by_id[i]["filename"].lower().endswith((".webm", ".mp4"))]
-    if not paths:
-        raise comfy.ComfyError("no usable stills selected for the reel")
+        for shot in shots:
+            sid = shot.get("id")
+            if shot.get("src") == "ref":
+                row = conn.execute("SELECT * FROM refs WHERE id=?", (sid,)).fetchone()
+                if row and row["kind"] != "audio":
+                    paths.append(REFS / row["filename"])
+            else:
+                row = conn.execute("SELECT * FROM images WHERE id=?", (sid,)).fetchone()
+                if row and not row["filename"].lower().endswith((".webm", ".mp4")):
+                    paths.append(OUT / row["filename"])
+    paths = [p for p in paths if p.exists()]
+    if len(paths) < 2:
+        raise comfy.ComfyError("need at least two usable stills for a reel")
 
     audio = None
     if params.get("audio_ref_id"):

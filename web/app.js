@@ -11,9 +11,10 @@ const isReel = (f) => /\.mp4$/i.test(f || '');
 
 let CONFIG = null;
 let CURRENT = null;   // item open in the lightbox
-let SELECTED = [];    // ordered image ids for the reel builder
+let SELECTED = [];    // ordered shot keys ('image:5' / 'ref:3')
 let REEL_MODE = false;
-let IMAGES = [];      // last gallery payload, so the filmstrip can look ids up
+let IMAGES = [];      // normalised tiles currently in the grid
+let REFS = [];        // uploaded references, for the 'my photos' source
 let NODE = { online: false, current: null, queued: 0 };
 
 /* ---------- segmented control ----------
@@ -50,7 +51,7 @@ async function boot() {
   $('aspect').innerHTML = body.aspects
     .map((a, i) => `<span data-value="${esc(a)}" class="${i === 0 ? 'on' : ''}">${esc(ratio[a] || a)}</span>`).join('');
 
-  ['aspect', 'ex-target', 'ex-anchor', 're-timing'].forEach((id) => initSeg($(id)));
+  ['aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source'].forEach((id) => initSeg($(id)));
 
   const chips = body.starters.map((s, i) => `<button class="chip" data-starter="${i}">${esc(s.name)}</button>`).join('');
   $('starters').innerHTML = chips;
@@ -298,6 +299,7 @@ $('recipes').onclick = async (e) => {
 async function refreshRefs() {
   const { body } = await api('/api/refs');
   const imgs = body.filter((r) => r.kind !== 'audio');
+  REFS = imgs;
   const opts = imgs.map((r) => `<option value="${r.id}">${esc(r.label)} (${esc(r.kind)})</option>`).join('');
   $('ref').innerHTML = '<option value="">none</option>' + opts;
   $('ex-ref').innerHTML = opts || '<option value="">upload one under References</option>';
@@ -344,11 +346,11 @@ $('ref-grid').onclick = async (e) => {
 /* ---------- gallery ---------- */
 function tileMarkup(i) {
   const vid = isVideo(i.filename);
-  const at = SELECTED.indexOf(i.id);
+  const at = SELECTED.indexOf(i.key);
   const cls = [at >= 0 ? 'picked' : '', vid ? 'unpickable' : ''].filter(Boolean).join(' ');
   const media = vid
     ? `<video src="/out/${esc(i.filename)}" muted loop playsinline preload="metadata"></video>`
-    : `<img src="/thumbs/${esc(i.filename)}.jpg" alt="" loading="lazy">`;
+    : `<img src="${esc(i.thumb)}" alt="" loading="lazy">`;
   return `
     <figure class="${cls}" data-img='${esc(JSON.stringify(i))}'>
       <div class="art">
@@ -357,7 +359,8 @@ function tileMarkup(i) {
         ${i.favourite && at < 0 ? '<span class="star">&#9733;</span>' : ''}
         ${at >= 0 ? `<span class="pick">${at + 1}</span>` : ''}
       </div>
-      <figcaption><span>#${i.id}</span><span class="dim">${i.seed ? `seed ${i.seed}` : ''}</span></figcaption>
+      ${i.isRef ? '<span class="upload-tag">upload</span>' : ''}
+      <figcaption><span>${i.isRef ? esc(i.label) : '#' + i.id}</span><span class="dim">${i.isRef ? '' : (i.seed ? `seed ${i.seed}` : '')}</span></figcaption>
     </figure>`;
 }
 
@@ -379,9 +382,23 @@ function sizeTile(fig) {
   }
 }
 
+function asTile(i) {
+  return { ...i, key: `image:${i.id}`, src: 'image', thumb: `/thumbs/${i.filename}.jpg` };
+}
+function refAsTile(r) {
+  return { key: `ref:${r.id}`, src: 'ref', id: r.id, filename: r.filename,
+           thumb: `/refs/${r.filename}`, label: r.label, isRef: true, favourite: 0 };
+}
+
 async function refreshGallery() {
   const fav = $('only-fav').checked ? '?favourites=true' : '';
-  const { body } = await api('/api/images' + fav);
+  const { body: raw } = await api('/api/images' + fav);
+  // Uploaded photos only join the grid while picking shots for a reel.
+  const src = REEL_MODE ? $('re-source').value : 'renders';
+  const body = [
+    ...(src === 'uploads' ? [] : raw.map(asTile)),
+    ...(src === 'renders' ? [] : REFS.map(refAsTile)),
+  ];
   IMAGES = body;
   const empty = body.length === 0;
   $('gallery-empty').hidden = !empty;
@@ -405,8 +422,8 @@ $('grid').onclick = (e) => {
   const img = JSON.parse(fig.dataset.img);
   if (!REEL_MODE) return openLightbox(img);
   if (isVideo(img.filename)) return;   // clips and reels can't be shots
-  const at = SELECTED.indexOf(img.id);
-  if (at >= 0) SELECTED.splice(at, 1); else SELECTED.push(img.id);
+  const at = SELECTED.indexOf(img.key);
+  if (at >= 0) SELECTED.splice(at, 1); else SELECTED.push(img.key);
   syncSelection();
   refreshGallery();
 };
@@ -439,12 +456,12 @@ function syncSelection() {
   $('picking-count').textContent = `${n} / ${IMAGES.filter((i) => !isVideo(i.filename)).length} picked`;
   $('strip').hidden = !REEL_MODE || n === 0;
   if (REEL_MODE && n) {
-    const by = Object.fromEntries(IMAGES.map((i) => [i.id, i]));
-    $('strip-shots').innerHTML = SELECTED.map((id, k) => {
-      const im = by[id];
+    const by = Object.fromEntries(IMAGES.map((i) => [i.key, i]));
+    $('strip-shots').innerHTML = SELECTED.map((key, k) => {
+      const im = by[key];
       return `${k ? '<span class="cut">&#9679;</span>' : ''}
-        <div class="shot" data-shot="${id}">
-          ${im ? `<img src="/thumbs/${esc(im.filename)}.jpg" alt="">` : ''}
+        <div class="shot" data-shot="${esc(key)}">
+          ${im ? `<img src="${esc(im.thumb)}" alt="">` : ''}
           <span class="no">${k + 1}</span>
           <span class="secs">${shot.toFixed(2)}s</span>
         </div>`;
@@ -457,7 +474,7 @@ function syncSelection() {
 $('strip-shots').onclick = (e) => {
   const id = e.target.closest('[data-shot]')?.dataset.shot;
   if (!id) return;
-  const at = SELECTED.indexOf(+id);
+  const at = SELECTED.indexOf(id);
   if (at >= 0) SELECTED.splice(at, 1);
   syncSelection();
   refreshGallery();
@@ -470,13 +487,14 @@ $('re-timing').onchange = () => {
   syncSelection();
 };
 ['re-bpm', 're-beats', 're-seconds'].forEach((id) => { $(id).oninput = syncSelection; });
+$('re-source').onchange = () => { refreshGallery(); };
 $('re-transition').onchange = syncSelection;
 
 $('sel-clear').onclick = () => { SELECTED = []; syncSelection(); refreshGallery(); };
 
 $('sel-favs').onclick = async () => {
   const { body } = await api('/api/images?favourites=true');
-  SELECTED = body.filter((i) => !isVideo(i.filename)).map((i) => i.id).reverse();
+  SELECTED = body.filter((i) => !isVideo(i.filename)).map((i) => `image:${i.id}`).reverse();
   syncSelection();
   refreshGallery();
 };
@@ -487,7 +505,7 @@ async function buildReel(btn) {
   const { ok, body } = await api('/api/reels', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      image_ids: SELECTED,
+      shots: SELECTED.map((k) => { const [src, id] = k.split(':'); return { src, id: +id }; }),
       bpm: $('re-timing').value === 'bpm' ? +$('re-bpm').value : null,
       beats_per_shot: +$('re-beats').value,
       seconds: +$('re-seconds').value,
