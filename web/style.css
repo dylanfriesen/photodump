@@ -3,6 +3,7 @@
    system expressed as tokens + classes. */
 
 :root {
+  --navh: 0px;
   --bg:        #0a0c10;
   --panel:     #0c0f14;
   --raised:    #0f1218;
@@ -489,45 +490,120 @@ select option { background: var(--input); color: var(--ink); }
 .wave { display: flex; align-items: flex-end; gap: 1.5px; height: 13px; }
 .wave i { width: 2px; background: var(--teal); }
 
+/* ---------- action bar (pinned above the nav on mobile) ---------- */
+.actionbar { display: flex; flex-direction: column; gap: 6px; }
+.actionbar .row2 { display: flex; gap: 8px; }
+.actionbar .hint { margin: 0; }
+
+/* ---------- mobile bottom navigation ---------- */
+.mnav { display: none; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
-  body { overflow: auto; }
-  .shell { flex-direction: column; }
-  .studio { width: auto; border-right: none; border-bottom: 1px solid var(--line); }
-  .studio-body { overflow: visible; }
-  .output { min-height: 70vh; }
-  #grid { grid-template-columns: repeat(2, 1fr); }
+  :root { --navh: 64px; }
+  /* Screens scroll internally; the shell itself never does. */
+  body { overflow: hidden; height: 100dvh; }
+  header { height: 46px; padding: 0 16px; }
+  header .tagchip, header .who { display: none; }
+
+  .shell { flex-direction: column; min-height: 0; }
+
+  /* The render-node strip stays visible on every screen - it is the thing
+     you check before deciding whether queueing is worth it. */
+  .studio { width: auto; border-right: none; flex: 1; min-height: 0; }
+  .studio-head { padding: 0; flex: none; }
+  .node { border-radius: 0; border-left: none; border-right: none; border-top: none; }
+  #preflight { margin: 0; border-radius: 0; border-left: none; border-right: none; border-top: none; }
+
+  .tabs.sub { padding: 12px 16px 0; }
+  .tabs.sub button { min-height: 44px; font-size: 13.5px; }
+  .studio-body { padding: 14px 16px 16px; }
+
+  /* One screen at a time, chosen by the bottom nav. */
+  body[data-screen="studio"] .output { display: none; }
+  body:not([data-screen="studio"]) .tabs.sub,
+  body:not([data-screen="studio"]) .studio-body { display: none; }
+  body:not([data-screen="studio"]) .studio { flex: none; }
+  body:not([data-screen="studio"]) .out-head .tabs { display: none; }
+  .output { flex: 1; min-height: 0; }
+  .out-head { height: 44px; padding: 0 16px; }
+
+  /* Touch targets and iOS-safe text sizes (<16px zooms the page). */
+  input[type=text], input[type=number], select, textarea {
+    min-height: 44px; font-size: 16px; padding: 10px 12px; border-radius: 4px;
+  }
+  textarea { min-height: 0; }
+  .seg { padding: 3px; border-radius: 4px; }
+  .seg span { padding: 10px 2px; font-size: 12px; }
+  .seg.sans span { font-size: 13px; }
+  .stepper button { min-width: 44px; min-height: 40px; font-size: 17px; }
+  .stepper input { width: 40px; font-size: 15px; }
+  .btn { min-height: 44px; font-size: 13.5px; border-radius: 4px; }
+  .chip { min-height: 34px; padding: 7px 13px; font-size: 13px; }
+  .chip .x { width: 20px; height: 20px; line-height: 20px; font-size: 12px; }
+  .check { min-height: 34px; font-size: 13px; }
+  .check .box { width: 16px; height: 16px; }
+
+  /* Pin the primary action just above the nav. */
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: var(--navh); z-index: 12;
+    padding: 10px 16px; gap: 7px;
+    background: rgba(12,15,20,.97); border-top: 1px solid var(--line);
+    backdrop-filter: blur(8px);
+  }
+  .actionbar .btn { min-height: 46px; font-size: 14.5px; font-weight: 600; }
+  body[data-screen="studio"] .studio-body { padding-bottom: 96px; }
+
+  #grid { grid-template-columns: repeat(2, 1fr); padding: 0 16px 16px; column-gap: 12px; }
+  #grid figcaption { font-size: 10.5px; }
   #ref-grid { grid-template-columns: repeat(3, 1fr); }
   #ref-form { grid-template-columns: 1fr 1fr; }
-  #lightbox { padding: 0; }
-  .lb-body { flex-direction: column; }
-  .lb-side { width: auto; border-left: none; border-top: 1px solid var(--line); max-height: 50%; }
-  .strip { height: auto; flex-direction: column; }
-  .strip .right { width: auto; }
-}
+  #ref-form button { grid-column: span 2; }
 
-/* ---------- preflight ---------- */
-#preflight { margin-top: 8px; border: 1px solid var(--line-2); border-radius: var(--r); background: var(--raised-2); }
-#preflight > summary { display: flex; align-items: center; gap: 8px; padding: 8px 11px; cursor: pointer; list-style: none; font-size: 11.5px; color: var(--ink-2); }
-#preflight > summary::-webkit-details-marker { display: none; }
-#preflight > summary .caret { width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 5px solid var(--mute-3); transition: transform .15s; }
-#preflight[open] > summary .caret { transform: rotate(90deg); }
-#preflight.ok { border-color: rgba(79,214,192,.28); }
-#preflight.bad { border-color: rgba(255,184,77,.3); }
-#preflight.ok  #pf-summary b { color: var(--teal); }
-#preflight.bad #pf-summary b { color: var(--amber); }
-#pf-summary b { font-family: var(--mono); font-weight: 600; }
-#pf-body { padding: 0 11px 10px; display: flex; flex-direction: column; gap: 7px; border-top: 1px solid var(--line); padding-top: 9px; }
-.pf-row { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
-.pf-row .top { display: flex; align-items: center; gap: 7px; }
-.pf-row .tick { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; border-radius: var(--r-sm); padding: 2px 5px; }
-.pf-row.ok  .tick { color: #7fdccb; background: rgba(79,214,192,.11); }
-.pf-row.bad .tick { color: var(--amber); background: rgba(255,184,77,.13); }
-.pf-row .why { font-family: var(--mono); font-size: 10px; line-height: 1.5; color: var(--mute-2); overflow-wrap: anywhere; padding-left: 2px; }
-.job .fixes { display: flex; align-items: center; gap: 12px; }
-.job .fixes button { background: none; border: none; padding: 0; font-family: var(--mono); font-size: 10px; color: var(--mute-3); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.job .fixes button.warn { color: var(--red); }
-.job .fixes button:hover { color: var(--ink-2); }
+  .picking-bar { padding: 9px 16px; flex-wrap: wrap; }
+  .picking-bar .sub { display: none; }
+  .strip { height: auto; flex-direction: column; gap: 10px; }
+  .strip .vr { display: none; }
+  .strip .right { width: auto; }
+
+  /* Detail view is a full-screen takeover, not a modal. */
+  #lightbox { padding: 0; }
+  .lb-frame { border: none; border-radius: 0; }
+  .lb-body { flex-direction: column; overflow: auto; }
+  .lb-stage { flex: none; padding: 0 16px; background: none; }
+  #lb-img, #lb-vid { width: 100%; max-height: 56vh; }
+  .lb-side { width: auto; border-left: none; max-height: none; background: none; }
+  .lb-scroll { overflow: visible; padding: 14px 16px 24px; }
+  .lb-acts .btn { min-height: 46px; font-size: 13.5px; }
+  #lb-close { width: 32px; height: 32px; font-size: 15px; }
+  #lb-prompt { font-size: 11px; max-height: 88px; }
+  #lb-caption .text { font-size: 14.5px; }
+
+  /* ---- bottom navigation ---- */
+  .mnav {
+    display: flex; flex: none; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line); background: var(--panel); z-index: 14;
+  }
+  .mnav button {
+    flex: 1; min-height: 46px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 5px;
+    background: none; border: none; padding: 6px 2px;
+    font-size: 10.5px; color: var(--mute-4); cursor: pointer;
+  }
+  .mnav button i {
+    position: relative; width: 17px; height: 17px; border-radius: var(--r);
+    border: 1.5px solid var(--mute-4); background: transparent;
+  }
+  .mnav button.active { color: var(--ink-hi); font-weight: 600; }
+  .mnav button.active i { border-color: var(--lime); background: rgba(212,242,74,.22); }
+  .mnav .ndot {
+    position: absolute; top: -6px; right: -9px; min-width: 14px; height: 14px;
+    border-radius: 7px; background: var(--violet); color: var(--bg);
+    font-family: var(--mono); font-size: 9px; font-weight: 600; line-height: 14px;
+    text-align: center; padding: 0 2px;
+  }
+  /* The badge hangs off the icon, not the whole button. */
+}
 
 .upload-tag {
   position: absolute; left: 7px; bottom: 7px; font-family: var(--mono);

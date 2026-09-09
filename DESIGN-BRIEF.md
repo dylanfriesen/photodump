@@ -2,8 +2,10 @@
 
 > **Status: the desktop artboard is implemented.** `PhotodumpDesktop.dc.html`
 > (Claude Design project `3c802983`) was ported into `web/` on 2026-09-09.
-> `PhotodumpMobile.dc.html` in that project has **not** been ported — the
-> current mobile layout is the desktop CSS reflowing at a 900px breakpoint.
+> `PhotodumpMobile.dc.html` was ported on 2026-09-09 as well. Mobile is a real
+> layout, not a reflow: a bottom tab bar (Studio / Gallery / Queue / Refs) with
+> Fuse/Extend/Reel as sub-tabs inside Studio, a full-width render-node strip
+> that stays visible on every screen, and a pinned action bar.
 
 For a visual pass on the front end. The app is **built, wired and working**;
 this describes what the design layer may change freely and what it must not.

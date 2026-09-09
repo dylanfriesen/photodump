@@ -8,6 +8,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const isVideo = (f) => /\.(webm|mp4)$/i.test(f || '');
 const isReel = (f) => /\.mp4$/i.test(f || '');
+const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
 
 let CONFIG = null;
 let CURRENT = null;   // item open in the lightbox
@@ -59,6 +60,7 @@ async function boot() {
 
   $('node-bars').innerHTML = [0, 1, 2, 3, 4].map((i) => `<i style="height:${6 + i * 2}px"></i>`).join('');
 
+  switchScreen('studio');
   syncHint(); syncCounts(); syncFeather(); syncSelection();
   await Promise.all([refreshRefs(), refreshRecipes(), refreshGallery(), refreshJobs()]);
   pollStatus();
@@ -110,6 +112,9 @@ async function pollStatus() {
   const badge = $('queue-tab-badge');
   badge.hidden = !body.queued;
   badge.textContent = body.queued;
+  const mbadge = $('mnav-queue');
+  mbadge.hidden = !body.queued;
+  mbadge.textContent = body.queued;
 
   /* Re-check capability when the desktop comes back, not on every tick. */
   if (pollStatus.wasOnline === false && body.online) { probeNode(); refreshPreflight(); }
@@ -697,16 +702,37 @@ function switchTask(task) {
   REEL_MODE = task === 'reel';
   document.querySelector('.output').classList.toggle('picking', REEL_MODE);
   $('picking-bar').hidden = !REEL_MODE;
-  if (REEL_MODE) switchTab('gallery');
+  // On desktop the gallery sits beside the panel, so jump straight to it.
+  // On mobile that would hide the reel controls you just opened, so the
+  // user taps Gallery in the bottom nav when ready to pick.
+  if (REEL_MODE && !isMobile()) switchTab('gallery');
   syncSelection();
   refreshGallery();
 }
 
 function switchTab(tab) {
   document.querySelectorAll('.tabs:not(.sub) > button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  if (isMobile()) {
+    document.body.dataset.screen = tab;
+    document.querySelectorAll('.mnav button').forEach((b) =>
+      b.classList.toggle('active', b.dataset.screen === tab));
+  }
   document.querySelectorAll('.tab').forEach((d) => { d.hidden = d.dataset.tab !== tab; });
   document.querySelectorAll('[data-gallery-only]').forEach((e) => { e.hidden = tab !== 'gallery'; });
 }
+
+/* ---------- mobile screens ---------- */
+function switchScreen(screen) {
+  document.body.dataset.screen = screen;
+  document.querySelectorAll('.mnav button').forEach((b) =>
+    b.classList.toggle('active', b.dataset.screen === screen));
+  if (screen !== 'studio') switchTab(screen);
+}
+
+document.querySelector('.mnav').onclick = (e) => {
+  const s = e.target.closest('button')?.dataset.screen;
+  if (s) switchScreen(s);
+};
 
 document.querySelector('.tabs.sub').onclick = (e) => {
   const t = e.target.closest('button')?.dataset.task;

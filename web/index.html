@@ -125,13 +125,15 @@
           </div>
         </details>
 
-        <div style="display:flex;gap:8px">
-          <button id="btn-preview" class="btn">Preview tags</button>
-          <button id="btn-generate" class="btn go" style="flex:1">
-            <span>Queue render</span><span class="qty" id="gen-qty">&times;4</span>
-          </button>
+        <div class="actionbar">
+          <div class="hint" data-queue-hint></div>
+          <div class="row2">
+            <button id="btn-preview" class="btn">Preview tags</button>
+            <button id="btn-generate" class="btn go" style="flex:1">
+              <span>Queue render</span><span class="qty" id="gen-qty">&times;4</span>
+            </button>
+          </div>
         </div>
-        <div class="hint tight" data-queue-hint></div>
 
         <div id="preview" hidden>
           <div class="head">
@@ -215,10 +217,14 @@
           </div>
         </div>
 
-        <button id="btn-extend" class="btn go wide">
-          <span>Queue extend</span><span class="qty" id="ex-qty">&times;1</span>
-        </button>
-        <div class="hint tight" data-queue-hint></div>
+        <div class="actionbar">
+          <div class="hint" data-queue-hint></div>
+          <div class="row2">
+            <button id="btn-extend" class="btn go wide">
+              <span>Queue extend</span><span class="qty" id="ex-qty">&times;1</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- ---------- reel ---------- -->
@@ -286,9 +292,13 @@
 
         <div id="re-length"></div>
 
-        <button id="btn-reel" class="btn teal wide">
-          <span>Build reel</span><span class="note">server-side · builds now</span>
-        </button>
+        <div class="actionbar">
+          <div class="row2">
+            <button id="btn-reel" class="btn teal wide">
+              <span>Build reel</span><span class="note">server-side · builds now</span>
+            </button>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -384,6 +394,13 @@
     </div>
   </section>
 </div>
+
+<nav class="mnav">
+  <button data-screen="studio" class="active"><i></i><span>Studio</span></button>
+  <button data-screen="gallery"><i></i><span>Gallery</span></button>
+  <button data-screen="queue"><i><span class="ndot" id="mnav-queue" hidden></span></i><span>Queue</span></button>
+  <button data-screen="refs"><i></i><span>Refs</span></button>
+</nav>
 
 <!-- ==================== lightbox ==================== -->
 <div id="lightbox" hidden>

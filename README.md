@@ -55,6 +55,11 @@ tailscale serve --bg --https=8452 http://127.0.0.1:8096
 Loopback `:8096`, live at **https://kanto.tail4f3755.ts.net:8452**.
 No public vhost — there is no auth.
 
+The UI is one DOM serving two layouts. Above 900px it is a studio panel beside
+an output pane; below, a bottom tab bar switches whole screens and the
+render-node strip stays pinned under the header, because whether the desktop is
+awake is the thing you check before deciding to queue anything.
+
 ## The tasks
 
 **Fuse** — blends two sources into one design. Four modes:
