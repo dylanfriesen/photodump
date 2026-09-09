@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>anime-forge</title>
+<title>photodump</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
-  <h1>anime<span>-forge</span></h1>
+  <h1>photo<span>dump</span></h1>
   <div class="node" id="node">
     <span class="dot" id="node-dot"></span>
     <span id="node-text">checking render node…</span>
@@ -16,11 +16,12 @@
 </header>
 
 <main>
-  <!-- ============ forge ============ -->
-  <section class="panel forge">
+  <!-- ============ studio ============ -->
+  <section class="panel studio">
     <nav class="tabs sub">
       <button data-task="fuse" class="active">Fuse</button>
       <button data-task="extend">Extend</button>
+      <button data-task="reel">Reel</button>
     </nav>
 
     <div class="task" data-task="fuse">
@@ -121,6 +122,47 @@
         <button id="btn-extend" class="primary">Queue extend</button>
       </div>
     </div>
+
+    <!-- ---- reel ---- -->
+    <div class="task" data-task="reel" hidden>
+      <p class="hint">Click stills in the gallery to add them, in order. Renders
+      here on kanto &mdash; no GPU, so it works while the desktop sleeps.</p>
+      <div class="sel-summary">
+        <strong id="sel-count">0</strong> selected
+        <button id="sel-clear" class="ghost small">clear</button>
+        <button id="sel-favs" class="ghost small">use favourites</button>
+      </div>
+      <label>Cut timing
+        <select id="re-timing">
+          <option value="bpm">on the beat (BPM)</option>
+          <option value="fixed">fixed seconds</option>
+        </select>
+      </label>
+      <div class="row" id="re-bpm-row">
+        <label>BPM <input id="re-bpm" type="number" value="120" min="40" max="220"></label>
+        <label>Beats/shot <input id="re-beats" type="number" value="4" min="1" max="16"></label>
+      </div>
+      <label id="re-secs-row" hidden>Seconds per shot
+        <input id="re-seconds" type="number" value="2" step="0.25" min="0.4" max="10">
+      </label>
+      <div class="row">
+        <label>Motion <select id="re-motion">
+          <option value="kenburns">Ken Burns</option>
+          <option value="none">static</option>
+        </select></label>
+        <label>Between <select id="re-transition">
+          <option value="cut">hard cut</option>
+          <option value="crossfade">crossfade</option>
+        </select></label>
+      </div>
+      <label>Music
+        <select id="re-audio"><option value="">none</option></select>
+      </label>
+      <p class="hint" id="re-length"></p>
+      <div class="actions">
+        <button id="btn-reel" class="primary">Build reel</button>
+      </div>
+    </div>
   </section>
 
   <!-- ============ output ============ -->
@@ -145,12 +187,13 @@
 
     <div class="tab" data-tab="refs" hidden>
       <form id="ref-form" class="ref-form">
-        <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" required>
+        <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp,audio/*" required>
         <input type="text" id="ref-label" placeholder="label (e.g. gojo ref)">
         <select id="ref-kind">
           <option value="character">character</option>
           <option value="style">style</option>
           <option value="pose">pose</option>
+          <option value="audio">audio</option>
         </select>
         <button class="primary small">Upload</button>
       </form>

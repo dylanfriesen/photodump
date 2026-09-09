@@ -45,6 +45,6 @@
   },
   "24": {
     "class_type": "SaveWEBM",
-    "inputs": {"filename_prefix": "forge_vid", "codec": "vp9", "fps": 16.0, "crf": 32.0, "images": ["8", 0]}
+    "inputs": {"filename_prefix": "photodump_vid", "codec": "vp9", "fps": 16.0, "crf": 32.0, "images": ["8", 0]}
   }
 }

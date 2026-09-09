@@ -36,6 +36,6 @@
   },
   "9": {
     "class_type": "SaveImage",
-    "inputs": {"filename_prefix": "forge", "images": ["8", 0]}
+    "inputs": {"filename_prefix": "photodump", "images": ["8", 0]}
   }
 }

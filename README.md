@@ -1,4 +1,4 @@
-# anime-forge
+# photodump
 
 Original anime mashup art for Instagram, rendered on the desktop GPU.
 
@@ -52,7 +52,8 @@ docker compose up -d --build      # code is baked into the image
 tailscale serve --bg --https=8452 http://127.0.0.1:8096
 ```
 
-Loopback `:8096`, tailnet `:8452`. No public vhost — there is no auth.
+Loopback `:8096`, live at **https://kanto.tail4f3755.ts.net:8452**.
+No public vhost — there is no auth.
 
 ## The two tasks
 
@@ -134,11 +135,36 @@ i2v runs 4-5x slower on its *second* run under ROCm.
 
 Frame count is forced to 4n+1 — WAN silently degrades the final chunk otherwise.
 
+## Reels
+
+**Reel** assembles selected stills into a 1080x1920 mp4: Ken Burns motion, cuts
+on the beat, optional music.
+
+This is the one task that runs **on kanto, not the render node** - it is ffmpeg
+on CPU, so reels build while the desktop is asleep. The worker claims reel jobs
+without probing the node at all.
+
+Cut timing is driven by an explicit **BPM** rather than onset detection. Real
+beat detection means librosa (numpy/scipy/numba) for something you already know,
+and hard cuts on the beat are what reads as "synced" anyway - a crossfade softens
+exactly the moment you were trying to hit. Crossfades are available and overlap,
+so they shorten the finished reel; `reels.total_seconds()` accounts for that and
+the UI mirrors it.
+
+Upload music under References with kind `audio`.
+
+### Ken Burns gotcha
+
+`zoompan`'s `d` is how many output frames each *input* frame becomes. With a
+looped input, `d=frames` multiplies out to `frames x fps x seconds` of encoding -
+minutes of work for a few seconds of video. Use `d=1` and drive motion from `on`,
+bounding the shot with `-frames:v`. This was a real bug here, not a hypothetical.
+
 ## Editing
 
 Not built here, deliberately. For CapCut-style hand-finishing use **OpenCut**
 (self-hosted, browser-based, multi-track timeline) or DaVinci Resolve on the
-desktop. anime-forge's job is to produce and auto-assemble assets; a mature NLE
+desktop. photodump's job is to produce and auto-assemble assets; a mature NLE
 is where they get finished.
 
 ## Failure semantics

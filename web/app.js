@@ -7,6 +7,8 @@ const api = async (url, opts) => {
 
 let CONFIG = null;
 let CURRENT = null; // image open in the lightbox
+let SELECTED = [];  // ordered image ids for the reel builder
+let REEL_MODE = false;
 const isVideo = (f) => /\.(webm|mp4|gif|webp)$/i.test(f);
 
 // ---------- boot ----------
@@ -66,7 +68,7 @@ async function probeNode() {
   }
 }
 
-// ---------- forge ----------
+// ---------- studio ----------
 
 function formValues() {
   return {
@@ -164,9 +166,13 @@ $('recipes').onclick = async (e) => {
 
 async function refreshRefs() {
   const { body } = await api('/api/refs');
-  const opts = body.map((r) => `<option value="${r.id}">${r.label} (${r.kind})</option>`).join('');
+  const imgs = body.filter((r) => r.kind !== 'audio');
+  const opts = imgs.map((r) => `<option value="${r.id}">${r.label} (${r.kind})</option>`).join('');
   $('ref').innerHTML = '<option value="">none</option>' + opts;
   $('ex-ref').innerHTML = opts || '<option value="">upload one in References</option>';
+  $('re-audio').innerHTML = '<option value="">none</option>' +
+    body.filter((r) => r.kind === 'audio')
+        .map((r) => `<option value="${r.id}">${r.label}</option>`).join('');
   $('ref-grid').innerHTML = body.map((r) => `
     <figure data-ref="${r.id}">
       <img src="/refs/${r.filename}" alt="${r.label}" loading="lazy">
@@ -206,6 +212,7 @@ async function refreshGallery() {
              onmouseover="this.play()" onmouseout="this.pause()"></video>`
         : `<img src="/thumbs/${i.filename}.jpg" alt="" loading="lazy">`}
       ${i.favourite ? '<span class="star">★</span>' : ''}
+      ${SELECTED.indexOf(i.id) >= 0 ? `<span class="pick">${SELECTED.indexOf(i.id) + 1}</span>` : ''}
       <figcaption>#${i.id} · seed ${i.seed}</figcaption>
     </figure>`).join('');
 }
@@ -214,7 +221,68 @@ $('only-fav').onchange = refreshGallery;
 
 $('grid').onclick = (e) => {
   const fig = e.target.closest('[data-img]');
-  if (fig) openLightbox(JSON.parse(fig.dataset.img));
+  if (!fig) return;
+  const img = JSON.parse(fig.dataset.img);
+  if (!REEL_MODE) return openLightbox(img);
+  // Reel mode: clicking picks stills in order rather than opening them.
+  if (/\.(webm|mp4)$/i.test(img.filename)) return;
+  const at = SELECTED.indexOf(img.id);
+  if (at >= 0) SELECTED.splice(at, 1); else SELECTED.push(img.id);
+  syncSelection();
+  refreshGallery();
+};
+
+function syncSelection() {
+  $('sel-count').textContent = SELECTED.length;
+  const bpm = $('re-timing').value === 'bpm' ? +$('re-bpm').value : null;
+  const shot = bpm ? (60 / bpm) * +$('re-beats').value : +$('re-seconds').value;
+  const n = SELECTED.length;
+  // Crossfades overlap, so they shorten the finished reel - mirror reels.py.
+  const total = $('re-transition').value === 'crossfade' && n > 1
+    ? shot * n - Math.min(0.5, shot / 3) * (n - 1)
+    : shot * n;
+  $('re-length').textContent = n
+    ? `${n} shots x ${shot.toFixed(2)}s = ${total.toFixed(1)}s`
+    : '';
+}
+
+$('re-timing').onchange = (e) => {
+  const bpm = e.target.value === 'bpm';
+  $('re-bpm-row').hidden = !bpm;
+  $('re-secs-row').hidden = bpm;
+  syncSelection();
+};
+['re-bpm', 're-beats', 're-seconds'].forEach((id) => { $(id).oninput = syncSelection; });
+$('re-transition').onchange = syncSelection;
+
+$('sel-clear').onclick = () => { SELECTED = []; syncSelection(); refreshGallery(); };
+
+$('sel-favs').onclick = async () => {
+  const { body } = await api('/api/images?favourites=true');
+  SELECTED = body.filter((i) => !/\.(webm|mp4)$/i.test(i.filename)).map((i) => i.id).reverse();
+  syncSelection();
+  refreshGallery();
+};
+
+$('btn-reel').onclick = async (e) => {
+  if (SELECTED.length < 2) { alert('Pick at least two stills.'); return; }
+  e.target.disabled = true;
+  const { ok, body } = await api('/api/reels', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_ids: SELECTED,
+      bpm: $('re-timing').value === 'bpm' ? +$('re-bpm').value : null,
+      beats_per_shot: +$('re-beats').value,
+      seconds: +$('re-seconds').value,
+      motion: $('re-motion').value,
+      transition: $('re-transition').value,
+      audio_ref_id: $('re-audio').value ? +$('re-audio').value : null,
+    }),
+  });
+  e.target.disabled = false;
+  if (!ok) { alert(body.detail || 'reel failed'); return; }
+  refreshJobs();
+  pollStatus.last = undefined;
 };
 
 // ---------- queue ----------
@@ -356,6 +424,10 @@ document.querySelector('.tabs.sub').onclick = (e) => {
   if (!task) return;
   document.querySelectorAll('.tabs.sub button').forEach((b) => b.classList.toggle('active', b.dataset.task === task));
   document.querySelectorAll('.task').forEach((d) => { d.hidden = d.dataset.task !== task; });
+  REEL_MODE = task === 'reel';
+  document.querySelector('.output').classList.toggle('picking', REEL_MODE);
+  if (REEL_MODE) syncSelection();
+  refreshGallery();
 };
 
 // ---------- tabs ----------

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import comfy, imageops
+from . import comfy, imageops, reels
 from .config import DATA, OUT, REFS, THUMBS
 from .db import db, loads
 
@@ -30,10 +30,20 @@ def status() -> dict:
     return {**_state, "queued": q}
 
 
-async def _claim():
+async def _claim(local: bool = False):
+    """Claim the next queued job.
+
+    `local` selects reel jobs, which render here on kanto. They are claimed
+    without checking the node, since they never touch it. Node jobs are only
+    ever claimed *after* a successful health probe - otherwise a week of the
+    desktop being asleep would burn through MAX_ATTEMPTS on every job.
+    """
+    op = "=" if local else "!="
     with db() as conn:
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1"
+            "SELECT * FROM jobs WHERE status='queued' "
+            f"AND COALESCE(json_extract(params, '$.workflow'), '') {op} 'reel' "
+            "ORDER BY id LIMIT 1"
         ).fetchone()
         if not row:
             return None
@@ -82,6 +92,45 @@ def _thumb(name: str):
             im.convert("RGB").save(THUMBS / f"{name}.jpg", "JPEG", quality=85)
     except Exception:
         pass  # a missing thumb degrades the grid, it does not break the job
+
+
+async def _run_reel(job: dict):
+    """Assemble a reel from already-rendered stills. No render node involved."""
+    params = loads(job["params"])
+    ids = params.get("image_ids") or []
+    with db() as conn:
+        rows_ = conn.execute(
+            f"SELECT * FROM images WHERE id IN ({','.join('?' * len(ids))})", ids
+        ).fetchall() if ids else []
+    # Preserve the order the user picked, which SQL's IN does not.
+    by_id = {r["id"]: r for r in rows_}
+    paths = [OUT / by_id[i]["filename"] for i in ids
+             if i in by_id and not by_id[i]["filename"].lower().endswith((".webm", ".mp4"))]
+    if not paths:
+        raise comfy.ComfyError("no usable stills selected for the reel")
+
+    audio = None
+    if params.get("audio_ref_id"):
+        with db() as conn:
+            a = conn.execute("SELECT * FROM refs WHERE id=?", (params["audio_ref_id"],)).fetchone()
+        if a:
+            audio = REFS / a["filename"]
+
+    name = f"{job['id']}_reel.mp4"
+    await reels.build(
+        paths, name,
+        bpm=params.get("bpm"),
+        beats_per_shot=int(params.get("beats_per_shot", 4)),
+        seconds=float(params.get("seconds", 2.0)),
+        motion=params.get("motion", "kenburns"),
+        transition=params.get("transition", "cut"),
+        audio=audio,
+    )
+    with db() as conn:
+        conn.execute("INSERT INTO images (job_id, filename, seed) VALUES (?,?,0)",
+                     (job["id"], name))
+        conn.execute("UPDATE jobs SET status='done', finished_at=datetime('now') WHERE id=?",
+                     (job["id"],))
 
 
 async def _run(job: dict):
@@ -168,6 +217,20 @@ async def _run(job: dict):
 
 async def loop():
     while True:
+        # Reels build locally, so they drain even with the desktop asleep.
+        job = await _claim(local=True)
+        if job:
+            _state["current"] = job["id"]
+            try:
+                await _run_reel(job)
+                _state["last_error"] = ""
+            except Exception as e:
+                _fail(job["id"], str(e))
+                _state["last_error"] = str(e)
+            finally:
+                _state["current"] = None
+            continue
+
         h = await comfy.health()
         _state["online"] = h["online"]
         if not h["online"]:

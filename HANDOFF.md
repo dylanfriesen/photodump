@@ -1,4 +1,4 @@
-# anime-forge — handoff
+# photodump — handoff
 
 **Read this before touching anything.** The unusual parts of this codebase are
 responses to hard environmental constraints, not stylistic choices, and several
@@ -13,6 +13,7 @@ A studio for an Instagram anime page. Three tasks:
 - **Fuse** — blend two franchises into one original design (Pokémon × Jujutsu Kaisen)
 - **Extend** — outpaint a photo onto a new IG canvas (landscape → 4:5, 9:16, 1:1)
 - **Animate** — turn any generated still into a short clip
+- **Reel** — assemble stills into a 1080x1920 mp4 with beat-timed cuts and music
 
 Plus caption/hashtag drafting, a reference-image library, and saved recipes.
 
@@ -40,7 +41,7 @@ Three consequences that are *not* negotiable:
 
 ## 3. State: what is proven and what is not
 
-**Proven** — `./tools/smoke.sh`, 13 assertions, currently 13/13. Runs with no GPU
+**Proven** — `./tools/smoke.sh`, 16 assertions, currently 16/16. Runs with no GPU
 and no desktop, against a mock ComfyUI in `tools/mock_comfy.py`.
 
 **NOT proven — read this twice:**
@@ -109,6 +110,12 @@ Covered by smoke test 5.
 SDXL falls apart much above ~1MP and 16GB will OOM on a naive 1920×2404 canvas.
 Covered by smoke test 2.
 
+**f. Reel jobs must never gate on node health.**
+`worker._claim(local=True)` selects reel jobs and runs them without probing the
+node. Node jobs are only claimed *after* a successful health probe — otherwise a
+week of the desktop sleeping would burn `MAX_ATTEMPTS` on every queued job.
+Covered by smoke test 6, which kills the node before building a reel.
+
 **e. Workflow JSON node IDs are API, not decoration.**
 `comfy.py` indexes graphs by string key (`wf["3"]` is the KSampler, `wf["14"]` the
 pad node, `wf["23"]` the WAN latent). Renumber a graph and the builder breaks
@@ -130,7 +137,13 @@ WAN 2.2 i2v runs 4–5× slower on its second run under ROCm. Upstream, not ours
 **Container writes files as root.** Anything under `data/` is root-owned; host-side
 `rm -rf` fails. Delete from inside a container (see `tools/smoke.sh` cleanup).
 
-**No ffmpeg on kanto.** Needed before any reel-assembly work.
+**ffmpeg lives in the image, not on kanto.** Deliberate - no sudo needed and the
+dependency travels with the app. `docker run --rm photodump-photodump ffmpeg ...`
+to use it ad hoc.
+
+**`zoompan` d-parameter.** `d` is output frames per *input* frame. With a looped
+input, `d=frames` renders `frames x fps x seconds` of video. Use `d=1` + `on` +
+`-frames:v`. Cost an hour here already.
 
 **`--build` is mandatory.** Code is baked into the image; `docker compose restart`
 ships nothing. Same trap as nihongo.
@@ -144,6 +157,7 @@ app/config.py     paths, aspect buckets, outpaint pad geometry, WAN model names
 app/prompts.py    recipe -> danbooru-tag compiler; fusion modes and starters
 app/comfy.py      ComfyUI HTTP client; graph builders; the Offline/Error split
 app/imageops.py   outpaint source scaling
+app/reels.py      ffmpeg reel assembly (runs on kanto, never the node)
 app/worker.py     queue drainer; requeue-vs-fail semantics
 app/captions.py   Ollama caption/hashtag drafting
 app/db.py         SQLite schema + additive migrations
@@ -171,13 +185,8 @@ second thing that can be down independently.
 `--listen 0.0.0.0 --port 8188`. Then reconcile each workflow JSON against
 `GET /object_info`. Nothing else matters until renders actually come out.
 
-**P1 — Reel assembler.** Take favourited images → Ken Burns motion → beat-synced
-cuts → 9:16 export. Pure ffmpeg on kanto, so it works while the desktop sleeps.
-Needs ffmpeg installed first. Design note: this belongs on kanto precisely
-*because* it needs no GPU.
-
 **P1 — Deploy OpenCut** for CapCut-style hand-finishing. Deliberately not built
-here: rebuilding a mature NLE is not a good use of effort. anime-forge produces
+here: rebuilding a mature NLE is not a good use of effort. photodump produces
 and auto-assembles; a real editor finishes.
 
 **P2 — Batch seed variation** (same prompt, n seeds, contact sheet), **LoRA

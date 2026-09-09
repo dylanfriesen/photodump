@@ -1,4 +1,4 @@
-"""A fake ComfyUI, enough of the API to exercise anime-forge without a GPU.
+"""A fake ComfyUI, enough of the API to exercise photodump without a GPU.
 
 kanto has no usable GPU and the render node is a desktop that is asleep most of
 the time, so the only way to test this app on demand is to fake the node. This
@@ -20,8 +20,8 @@ Modes:
 
 Run it on the app's docker network so the container can reach it:
 
-    docker run -d --rm --name mock-comfy --network anime-forge_default \
-      -v "$PWD/tools:/m:ro" anime-forge-anime-forge python /m/mock_comfy.py
+    docker run -d --rm --name mock-comfy --network photodump_default \
+      -v "$PWD/tools:/m:ro" photodump-photodump python /m/mock_comfy.py
 """
 import argparse
 import io

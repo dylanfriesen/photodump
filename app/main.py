@@ -9,13 +9,14 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import captions, comfy, worker
+from . import captions, comfy, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows
 from .prompts import MODES, STARTERS, compile_negative, compile_prompt
 
 WEB = Path(__file__).parent.parent / "web"
 ALLOWED = {".png", ".jpg", ".jpeg", ".webp"}
+AUDIO = {".mp3", ".m4a", ".wav", ".ogg", ".aac", ".flac"}
 
 
 @asynccontextmanager
@@ -26,7 +27,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="anime-forge", lifespan=lifespan)
+app = FastAPI(title="photodump", lifespan=lifespan)
 
 
 # ---------- meta ----------
@@ -71,8 +72,9 @@ async def api_add_ref(
     notes: str = Form(""),
 ):
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in ALLOWED:
-        raise HTTPException(400, f"unsupported type {ext!r}; use png/jpg/webp")
+    allowed = AUDIO if kind == "audio" else ALLOWED
+    if ext not in allowed:
+        raise HTTPException(400, f"unsupported type {ext!r} for kind {kind!r}")
     name = f"{uuid.uuid4().hex}{ext}"
     with (REFS / name).open("wb") as out:
         shutil.copyfileobj(file.file, out)
@@ -150,6 +152,34 @@ async def api_generate(payload: dict):
             )
             ids.append(cur.lastrowid)
     return {"queued": ids, "node": worker.status()}
+
+
+# ---------- reels ----------
+
+@app.post("/api/reels")
+async def api_reel(payload: dict):
+    """Queue a reel. Renders locally, so it works with the desktop asleep."""
+    ids = payload.get("image_ids") or []
+    if len(ids) < 2:
+        raise HTTPException(400, "pick at least two stills")
+    params = {
+        "workflow": "reel",
+        "image_ids": [int(i) for i in ids],
+        "bpm": float(payload["bpm"]) if payload.get("bpm") else None,
+        "beats_per_shot": int(payload.get("beats_per_shot", 4)),
+        "seconds": float(payload.get("seconds", 2.0)),
+        "motion": payload.get("motion", "kenburns"),
+        "transition": payload.get("transition", "cut"),
+        "audio_ref_id": payload.get("audio_ref_id"),
+    }
+    shot = reels.shot_seconds(params["bpm"], params["beats_per_shot"], params["seconds"])
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO jobs (prompt, negative, params) VALUES (?,?,?)",
+            (f"reel from {len(ids)} stills", "", json.dumps(params)),
+        )
+    return {"queued": [cur.lastrowid], "shot_seconds": round(shot, 3),
+            "total_seconds": round(reels.total_seconds(shot, len(ids), params["transition"]), 2)}
 
 
 # ---------- queue + gallery ----------

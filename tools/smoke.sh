@@ -10,8 +10,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-PROJ=anime-forge-smoke
-export CONTAINER_NAME=anime-forge-smoke
+PROJ=photodump-smoke
+export CONTAINER_NAME=photodump-smoke
 NET=${PROJ}_default
 B=http://127.0.0.1:8097
 PASS=0; FAIL=0
@@ -25,7 +25,7 @@ cleanup() {
   docker rm -f mock-comfy >/dev/null 2>&1
   PORT=8097 DATA_DIR=/srv/data/_smoke docker compose -p $PROJ down >/dev/null 2>&1
   # Files are container-owned (root); remove them from inside a container.
-  docker run --rm -v "$PWD/data:/d" ${PROJ}-anime-forge rm -rf /d/_smoke >/dev/null 2>&1 \
+  docker run --rm -v "$PWD/data:/d" ${PROJ}-photodump rm -rf /d/_smoke >/dev/null 2>&1 \
     || rm -rf data/_smoke 2>/dev/null
 }
 trap cleanup EXIT
@@ -33,7 +33,7 @@ trap cleanup EXIT
 start_mock() {  # $@ = extra mock flags
   docker rm -f mock-comfy >/dev/null 2>&1
   docker run -d --rm --name mock-comfy --network "$NET" \
-    -v "$PWD/tools:/m:ro" ${PROJ}-anime-forge python /m/mock_comfy.py "$@" >/dev/null
+    -v "$PWD/tools:/m:ro" ${PROJ}-photodump python /m/mock_comfy.py "$@" >/dev/null
   sleep 2
 }
 
@@ -75,7 +75,7 @@ wait_for "sum(1 for j in jobs if j['status']=='done')==2" 90 \
 check "images stored" "$(curl -s $B/api/images | field "len(d)")" "2"
 
 say "2. outpaint geometry (1920x1080 -> 4:5)"
-docker run --rm -v /tmp:/t ${PROJ}-anime-forge python -c "
+docker run --rm -v /tmp:/t ${PROJ}-photodump python -c "
 from PIL import Image; Image.new('RGB',(1920,1080),(90,150,210)).save('/t/smoke_land.png')" >/dev/null 2>&1
 RID=$(curl -s -X POST $B/api/refs -F "file=@/tmp/smoke_land.png" -F "label=land" | field "d['id']")
 curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
@@ -123,7 +123,24 @@ wait_for "jobs[0]['status']=='failed'" 200 \
   && ok "gave up instead of looping forever" || bad "did not fail within 200s"
 check "attempt ceiling honoured" "$(curl -s $B/api/jobs | field "d[0]['attempts']")" "5"
 
-say "6. IP-Adapter hidden when the node pack is absent"
+say "6. reel assembly (renders locally - no node needed)"
+IDS=$(curl -s $B/api/images | python3 -c "
+import json,sys; print(json.dumps([i['id'] for i in json.load(sys.stdin) if i['filename'].endswith('.png')]))")
+docker kill mock-comfy >/dev/null 2>&1     # prove reels drain with the node DOWN
+sleep 2
+curl -s -X POST $B/api/reels -H 'Content-Type: application/json' \
+  -d "{\"image_ids\":$IDS,\"bpm\":128,\"beats_per_shot\":4,\"transition\":\"cut\"}" >/dev/null
+wait_for "any(j['status']=='done' and 'reel' in j['params'] for j in jobs)" 150 \
+  && ok "reel built with the render node offline" || bad "reel did not build"
+RJ=$(curl -s $B/api/jobs | field "[j['id'] for j in d if 'reel' in j['params']][0]")
+DUR=$(docker exec ${CONTAINER_NAME} ffprobe -v error -show_entries format=duration \
+  -of csv=p=0 /srv/data/_smoke/out/${RJ}_reel.mp4 2>/dev/null | cut -c1-4)
+check "reel duration matches 4 shots x 1.875s" "$DUR" "7.46"
+check "reel is 1080x1920" \
+  "$(docker exec ${CONTAINER_NAME} ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=p=0 /srv/data/_smoke/out/${RJ}_reel.mp4 2>/dev/null)" "1080,1920"
+start_mock --latency 2
+
+say "7. IP-Adapter hidden when the node pack is absent"
 start_mock --no-ipadapter
 check "has_ipadapter reported false" "$(curl -s $B/api/node | field "d['has_ipadapter']")" "False"
 

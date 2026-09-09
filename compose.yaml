@@ -1,7 +1,7 @@
 services:
-  anime-forge:
+  photodump:
     build: .
-    container_name: ${CONTAINER_NAME:-anime-forge}
+    container_name: ${CONTAINER_NAME:-photodump}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PORT:-8096}:8000"

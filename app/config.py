@@ -14,7 +14,7 @@ DATA = Path(os.getenv("DATA_DIR", "/srv/data"))
 REFS = DATA / "refs"
 OUT = DATA / "out"
 THUMBS = DATA / "thumbs"
-DB_PATH = DATA / "forge.db"
+DB_PATH = DATA / "photodump.db"
 
 for _d in (REFS, OUT, THUMBS):
     _d.mkdir(parents=True, exist_ok=True)
