@@ -66,11 +66,19 @@ class Handler(BaseHTTPRequestHandler):
                     "input": {"required": {"ckpt_name": [["mock_illustrious.safetensors"]]}}
                 },
                 "KSampler": {}, "LoadImage": {}, "ImagePadForOutpaint": {},
-                "VAEEncodeForInpaint": {}, "UNETLoader": {}, "CLIPLoader": {},
+                "VAEEncodeForInpaint": {}, "VAEEncode": {}, "VAEDecode": {},
+                "CLIPTextEncode": {}, "EmptyLatentImage": {}, "SaveImage": {},
+                "IPAdapterAdvanced": {},
+                "UNETLoader": {"input": {"required": {"unet_name": [["wan2.2_ti2v_5B_fp16.safetensors"]]}}},
+                "CLIPLoader": {"input": {"required": {"clip_name": [["umt5_xxl_fp16.safetensors"]]}}},
+                "VAELoader": {"input": {"required": {"vae_name": [["wan2.2_vae.safetensors"]]}}},
                 "Wan22ImageToVideoLatent": {}, "SaveWEBM": {},
             }
             if not ARGS.no_ipadapter:
                 info["IPAdapterUnifiedLoader"] = {}
+            if ARGS.no_wan:
+                for n in ("UNETLoader", "CLIPLoader", "Wan22ImageToVideoLatent", "SaveWEBM"):
+                    info.pop(n, None)
             return self._send(200, info)
 
         if u.path.startswith("/history/"):
@@ -154,6 +162,7 @@ if __name__ == "__main__":
     ap.add_argument("--latency", type=float, default=3.0)
     ap.add_argument("--flaky", action="store_true", help="up, but crashes on every submit")
     ap.add_argument("--no-ipadapter", action="store_true", help="pretend the node pack is missing")
+    ap.add_argument("--no-wan", action="store_true", help="pretend the WAN video nodes are missing")
     ARGS = ap.parse_args()
     print(f"mock ComfyUI on :{ARGS.port} (latency={ARGS.latency}s flaky={ARGS.flaky})", flush=True)
     ThreadingHTTPServer(("0.0.0.0", ARGS.port), Handler).serve_forever()

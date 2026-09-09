@@ -505,3 +505,26 @@ select option { background: var(--input); color: var(--ink); }
   .strip { height: auto; flex-direction: column; }
   .strip .right { width: auto; }
 }
+
+/* ---------- preflight ---------- */
+#preflight { margin-top: 8px; border: 1px solid var(--line-2); border-radius: var(--r); background: var(--raised-2); }
+#preflight > summary { display: flex; align-items: center; gap: 8px; padding: 8px 11px; cursor: pointer; list-style: none; font-size: 11.5px; color: var(--ink-2); }
+#preflight > summary::-webkit-details-marker { display: none; }
+#preflight > summary .caret { width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 5px solid var(--mute-3); transition: transform .15s; }
+#preflight[open] > summary .caret { transform: rotate(90deg); }
+#preflight.ok { border-color: rgba(79,214,192,.28); }
+#preflight.bad { border-color: rgba(255,184,77,.3); }
+#preflight.ok  #pf-summary b { color: var(--teal); }
+#preflight.bad #pf-summary b { color: var(--amber); }
+#pf-summary b { font-family: var(--mono); font-weight: 600; }
+#pf-body { padding: 0 11px 10px; display: flex; flex-direction: column; gap: 7px; border-top: 1px solid var(--line); padding-top: 9px; }
+.pf-row { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+.pf-row .top { display: flex; align-items: center; gap: 7px; }
+.pf-row .tick { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; border-radius: var(--r-sm); padding: 2px 5px; }
+.pf-row.ok  .tick { color: #7fdccb; background: rgba(79,214,192,.11); }
+.pf-row.bad .tick { color: var(--amber); background: rgba(255,184,77,.13); }
+.pf-row .why { font-family: var(--mono); font-size: 10px; line-height: 1.5; color: var(--mute-2); overflow-wrap: anywhere; padding-left: 2px; }
+.job .fixes { display: flex; align-items: center; gap: 12px; }
+.job .fixes button { background: none; border: none; padding: 0; font-family: var(--mono); font-size: 10px; color: var(--mute-3); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.job .fixes button.warn { color: var(--red); }
+.job .fixes button:hover { color: var(--ink-2); }

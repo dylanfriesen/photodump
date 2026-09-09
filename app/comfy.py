@@ -39,15 +39,20 @@ async def health() -> dict:
         return {"online": False, "error": str(e)}
 
 
-async def available() -> dict:
-    """Checkpoints the node actually has, and whether IP-Adapter nodes exist."""
+async def object_info() -> dict:
+    """The node's full capability map. Raises ComfyOffline if unreachable."""
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=20) as c:
             r = await c.get(f"{COMFY_URL}/object_info")
             r.raise_for_status()
-            info = r.json()
+            return r.json()
     except Exception as e:
         raise ComfyOffline(str(e)) from e
+
+
+async def available() -> dict:
+    """Checkpoints the node actually has, and whether IP-Adapter nodes exist."""
+    info = await object_info()
 
     ckpts = []
     node = info.get("CheckpointLoaderSimple", {})

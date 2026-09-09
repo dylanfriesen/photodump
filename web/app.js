@@ -62,6 +62,7 @@ async function boot() {
   await Promise.all([refreshRefs(), refreshRecipes(), refreshGallery(), refreshJobs()]);
   pollStatus();
   probeNode();
+  refreshPreflight();
 }
 
 function syncHint() {
@@ -109,12 +110,39 @@ async function pollStatus() {
   badge.hidden = !body.queued;
   badge.textContent = body.queued;
 
+  /* Re-check capability when the desktop comes back, not on every tick. */
+  if (pollStatus.wasOnline === false && body.online) { probeNode(); refreshPreflight(); }
+  pollStatus.wasOnline = body.online;
+
   const busy = body.current != null;
   if (pollStatus.last !== undefined && pollStatus.last !== `${body.current}|${body.queued}`) {
     refreshGallery(); refreshJobs();
   }
   pollStatus.last = `${body.current}|${body.queued}`;
   setTimeout(pollStatus, busy ? 3000 : 10000);
+}
+
+async function refreshPreflight() {
+  const el = $('preflight');
+  const { ok, body } = await api('/api/preflight');
+  if (!ok || !body.online) { el.hidden = true; return; }
+  el.hidden = false;
+  const good = body.ok;
+  el.classList.toggle('ok', good);
+  el.classList.toggle('bad', !good);
+  $('pf-summary').innerHTML = good
+    ? `<b>${body.ready}/${body.total}</b> workflows ready on the node`
+    : `<b>${body.total - body.ready}</b> of ${body.total} workflows blocked \u2014 click for detail`;
+  $('pf-body').innerHTML = body.workflows.map((w) => {
+    const why = [
+      w.missing_nodes.length ? `missing nodes: ${w.missing_nodes.join(', ')}` : '',
+      ...w.missing_models.map((m) => `${m.field} ${JSON.stringify(m.want)} not among the node's ${m.count} option(s)`),
+    ].filter(Boolean);
+    return `<div class="pf-row ${w.ok ? 'ok' : 'bad'}">
+      <div class="top"><span class="tick">${w.ok ? 'ready' : 'blocked'}</span><span>${esc(w.label)}</span></div>
+      ${why.map((t) => `<span class="why">${esc(t)}</span>`).join('')}
+    </div>`;
+  }).join('');
 }
 
 async function probeNode() {
@@ -528,13 +556,29 @@ async function refreshJobs() {
       <div class="act">
         ${j.status === 'queued' ? `<button data-cancel="${j.id}">cancel</button>` : ''}
       </div>
+      ${(j.status === 'failed' || j.status === 'cancelled') ? `
+      <div class="fixes" style="grid-column:2/-1">
+        <button data-requeue="${j.id}" class="warn">requeue</button>
+        ${j.error ? `<button data-copyerr="${j.id}">copy error</button>` : ''}
+      </div>` : ''}
     </div>`;
   }).join('') || '<p class="hint">Queue is empty.</p>';
 }
 
 $('jobs').onclick = async (e) => {
-  if (!e.target.dataset.cancel) return;
-  await api(`/api/jobs/${e.target.dataset.cancel}`, { method: 'DELETE' });
+  const d = e.target.dataset;
+  if (d.cancel) {
+    await api(`/api/jobs/${d.cancel}`, { method: 'DELETE' });
+  } else if (d.requeue) {
+    const { ok, body } = await api(`/api/jobs/${d.requeue}/requeue`, { method: 'POST' });
+    if (!ok) { alert(body.detail || 'could not requeue'); return; }
+  } else if (d.copyerr) {
+    const j = (await api('/api/jobs')).body.find((x) => x.id === +d.copyerr);
+    navigator.clipboard?.writeText(j?.error || '');
+    e.target.textContent = 'copied';
+    setTimeout(() => { e.target.textContent = 'copy error'; }, 1200);
+    return;
+  } else return;
   refreshJobs();
   pollStatus.last = undefined;
 };

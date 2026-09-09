@@ -9,7 +9,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import captions, comfy, reels, worker
+from . import captions, comfy, preflight, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows
 from .prompts import (MODES, STARTERS, compile_negative, compile_parts,
@@ -55,6 +55,15 @@ async def api_node():
         return await comfy.available()
     except comfy.ComfyOffline as e:
         return JSONResponse({"offline": True, "error": str(e)}, status_code=503)
+
+
+@app.get("/api/preflight")
+async def api_preflight():
+    """What each workflow needs vs what the node has. See app/preflight.py."""
+    try:
+        return await preflight.run()
+    except comfy.ComfyOffline as e:
+        return JSONResponse({"online": False, "error": str(e)}, status_code=503)
 
 
 # ---------- references ----------
@@ -197,6 +206,27 @@ async def api_jobs(limit: int = 40):
 async def api_cancel(job_id: int):
     with db() as conn:
         conn.execute("UPDATE jobs SET status='cancelled' WHERE id=? AND status='queued'", (job_id,))
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/requeue")
+async def api_requeue(job_id: int):
+    """Put a failed or cancelled job back on the queue with a fresh attempt count.
+
+    A job that burned through MAX_ATTEMPTS against a broken graph is otherwise
+    dead; after the graph is fixed you want to retry it, not retype it.
+    """
+    with db() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such job")
+        if row["status"] not in ("failed", "cancelled"):
+            raise HTTPException(400, f"cannot requeue a {row['status']} job")
+        conn.execute(
+            "UPDATE jobs SET status='queued', attempts=0, error='', "
+            "started_at=NULL, finished_at=NULL WHERE id=?",
+            (job_id,),
+        )
     return {"ok": True}
 
 
