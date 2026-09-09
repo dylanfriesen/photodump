@@ -109,3 +109,46 @@ wrong. The full pipeline was verified against a mock ComfyUI implementing
 `/system_stats`, `/object_info`, `/prompt`, `/history`, `/view` and
 `/upload/image` — including killing the mock mid-render to confirm jobs requeue
 rather than fail.
+
+## Video
+
+**Animate** turns any generated still into a clip — open it in the gallery,
+hit Animate, describe the *motion* only.
+
+Runs WAN 2.2 **TI2V-5B** (single-model; the 14B needs dual high/low-noise
+models and GGUF quantisation to fit 16GB). Set the model filenames in `.env`:
+
+```
+WAN_UNET=wan2.2_ti2v_5B_fp16.safetensors
+WAN_CLIP=umt5_xxl_fp16.safetensors     # NOT the fp8 one - see below
+WAN_VAE=wan2.2_vae.safetensors
+```
+
+**The fp8 trap bites hardest here.** Nearly every published WAN workflow uses
+`umt5_xxl_fp8_e4m3fn_scaled.safetensors` as the text encoder — precisely the
+format broken on RDNA4/Windows. Use the fp16 or a GGUF encoder or it will fail
+with `NotImplementedError` on an operator the docs claim is supported.
+
+Expect minutes per clip, not seconds. Also note ComfyUI issue #12672: WAN 2.2
+i2v runs 4-5x slower on its *second* run under ROCm.
+
+Frame count is forced to 4n+1 — WAN silently degrades the final chunk otherwise.
+
+## Editing
+
+Not built here, deliberately. For CapCut-style hand-finishing use **OpenCut**
+(self-hosted, browser-based, multi-track timeline) or DaVinci Resolve on the
+desktop. anime-forge's job is to produce and auto-assemble assets; a mature NLE
+is where they get finished.
+
+## Failure semantics
+
+Three distinct outcomes, and the distinction is the point:
+
+| situation | outcome |
+|---|---|
+| node asleep / disappears mid-render | requeued, **not** failed |
+| node crashes on this graph repeatedly | failed after 5 attempts (`MAX_ATTEMPTS`) |
+| malformed graph, missing checkpoint | failed immediately with the node's own error |
+
+All three are covered by the mock-based tests described above.

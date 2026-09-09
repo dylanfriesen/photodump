@@ -141,3 +141,8 @@ pre {
 
 .tabs.sub { margin-bottom: 1rem; }
 .tabs.sub button { font-size: .82rem; padding: .4rem .7rem; }
+
+.grid video { width: 100%; display: block; aspect-ratio: 4/5; object-fit: cover; }
+#lb-vid { max-width: 100%; max-height: 88vh; border-radius: 8px; }
+.animate { margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+.animate h3 { margin-top: 0; }

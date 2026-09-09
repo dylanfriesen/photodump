@@ -10,7 +10,8 @@ from pathlib import Path
 
 import httpx
 
-from .config import COMFY_URL, CHECKPOINT, ASPECTS
+from .config import (COMFY_URL, CHECKPOINT, ASPECTS, VIDEO_SIZES,
+                     WAN_UNET, WAN_CLIP, WAN_VAE)
 
 WORKFLOWS = Path(__file__).parent / "workflows"
 
@@ -87,8 +88,11 @@ async def upload_image(path: Path) -> str:
 def build(prompt: str, negative: str, params: dict, ref_name: str | None = None) -> tuple[dict, int]:
     """Fill a workflow template. Returns (graph, seed) so the seed can be recorded."""
     mode = params.get("workflow") or ("img2img" if ref_name else "txt2img")
-    if mode in ("img2img", "ipadapter", "outpaint") and not ref_name:
+    if mode in ("img2img", "ipadapter", "outpaint", "wan_i2v") and not ref_name:
         mode = "txt2img"
+
+    if mode == "wan_i2v":
+        return _build_video(prompt, negative, params, ref_name)
 
     wf = _load(mode)
     seed = params.get("seed")
@@ -125,6 +129,38 @@ def build(prompt: str, negative: str, params: dict, ref_name: str | None = None)
             wf["13"]["inputs"]["weight"] = float(params.get("ip_weight", 0.7))
 
     wf["3"]["inputs"] = k
+    return wf, seed
+
+
+def _build_video(prompt: str, negative: str, params: dict, ref_name: str) -> tuple[dict, int]:
+    """WAN 2.2 image-to-video. Separate builder: it shares no nodes with SDXL."""
+    wf = _load("wan_i2v")
+    seed = params.get("seed")
+    seed = int(seed) if seed and int(seed) > 0 else random.randint(1, 2**31 - 1)
+
+    wf["20"]["inputs"]["unet_name"] = params.get("wan_unet") or WAN_UNET
+    wf["21"]["inputs"]["clip_name"] = params.get("wan_clip") or WAN_CLIP
+    wf["22"]["inputs"]["vae_name"] = params.get("wan_vae") or WAN_VAE
+    wf["10"]["inputs"]["image"] = ref_name
+    wf["6"]["inputs"]["text"] = prompt
+    wf["7"]["inputs"]["text"] = negative
+
+    w, h = VIDEO_SIZES.get(params.get("video_size", "story"), VIDEO_SIZES["story"])
+    fps = int(params.get("fps", 16))
+    seconds = float(params.get("seconds", 3))
+    # WAN wants 4n+1 frames; anything else silently degrades the last chunk.
+    length = int(round(fps * seconds))
+    length = max(17, length - (length - 1) % 4)
+
+    wf["23"]["inputs"].update({"width": w, "height": h, "length": length})
+    wf["3"]["inputs"].update({
+        "seed": seed,
+        "steps": int(params.get("steps", 20)),
+        "cfg": float(params.get("cfg", 5.0)),
+        "sampler_name": params.get("sampler", "uni_pc"),
+        "scheduler": "simple",
+    })
+    wf["24"]["inputs"]["fps"] = float(fps)
     return wf, seed
 
 

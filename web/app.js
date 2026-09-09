@@ -7,6 +7,7 @@ const api = async (url, opts) => {
 
 let CONFIG = null;
 let CURRENT = null; // image open in the lightbox
+const isVideo = (f) => /\.(webm|mp4|gif|webp)$/i.test(f);
 
 // ---------- boot ----------
 
@@ -200,7 +201,10 @@ async function refreshGallery() {
   $('gallery-empty').hidden = body.length > 0;
   $('grid').innerHTML = body.map((i) => `
     <figure data-img='${JSON.stringify(i).replace(/'/g, '&#39;')}'>
-      <img src="/thumbs/${i.filename}.jpg" alt="" loading="lazy">
+      ${isVideo(i.filename)
+        ? `<video src="/out/${i.filename}" muted loop preload="metadata"
+             onmouseover="this.play()" onmouseout="this.pause()"></video>`
+        : `<img src="/thumbs/${i.filename}.jpg" alt="" loading="lazy">`}
       ${i.favourite ? '<span class="star">★</span>' : ''}
       <figcaption>#${i.id} · seed ${i.seed}</figcaption>
     </figure>`).join('');
@@ -236,7 +240,14 @@ $('jobs').onclick = async (e) => {
 function openLightbox(img) {
   CURRENT = img;
   $('lightbox').hidden = false;
-  $('lb-img').src = `/out/${img.filename}`;
+  const vid = isVideo(img.filename);
+  $('lb-img').hidden = vid;
+  $('lb-vid').hidden = !vid;
+  $('animate-box').hidden = true;
+  // Only a still can be animated; a clip is already the output.
+  $('lb-animate').hidden = vid;
+  if (vid) { $('lb-vid').src = `/out/${img.filename}`; $('lb-img').removeAttribute('src'); }
+  else { $('lb-img').src = `/out/${img.filename}`; $('lb-vid').removeAttribute('src'); }
   $('lb-prompt').textContent = img.prompt || '';
   $('lb-download').href = `/out/${img.filename}`;
   $('lb-download').download = img.filename;
@@ -273,6 +284,34 @@ $('lb-caption-btn').onclick = async (e) => {
   if (!ok) { renderCaption('', ''); alert(body.error || 'caption failed'); return; }
   renderCaption(body.caption, body.hashtags.join(' '));
   refreshGallery();
+};
+
+$('lb-animate').onclick = () => {
+  const box = $('animate-box');
+  box.hidden = !box.hidden;
+};
+
+$('an-go').onclick = async (e) => {
+  const motion = $('an-prompt').value.trim();
+  if (!motion) { alert('Describe the motion you want.'); return; }
+  e.target.disabled = true;
+  await api('/api/generate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: motion,
+      negative_full: 'static, still image, frozen, jpeg artifacts, watermark, text',
+      workflow: 'wan_i2v',
+      src_image_id: CURRENT.id,
+      count: 1,
+      seconds: +$('an-seconds').value,
+      video_size: $('an-size').value,
+    }),
+  });
+  e.target.disabled = false;
+  $('animate-box').hidden = true;
+  $('lightbox').hidden = true;
+  refreshJobs();
+  pollStatus.last = undefined;
 };
 
 $('lb-delete').onclick = async () => {

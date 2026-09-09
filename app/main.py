@@ -133,6 +133,9 @@ async def api_generate(payload: dict):
         "feathering": int(payload.get("feathering", 40)),
         "extend_target": payload.get("extend_target", "portrait"),
         "extend_anchor": payload.get("extend_anchor", "center"),
+        "video_size": payload.get("video_size", "story"),
+        "seconds": float(payload.get("seconds", 3)),
+        "fps": int(payload.get("fps", 16)),
     }
     ref_id = payload.get("ref_id") or None
 
@@ -140,8 +143,10 @@ async def api_generate(payload: dict):
     with db() as conn:
         for _ in range(count):
             cur = conn.execute(
-                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id) VALUES (?,?,?,?,?)",
-                (payload.get("recipe_id"), prompt, negative, json.dumps(params), ref_id),
+                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, src_image_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (payload.get("recipe_id"), prompt, negative, json.dumps(params), ref_id,
+                 payload.get("src_image_id")),
             )
             ids.append(cur.lastrowid)
     return {"queued": ids, "node": worker.status()}

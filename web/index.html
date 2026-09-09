@@ -163,12 +163,29 @@
 <div id="lightbox" hidden>
   <div class="lb-inner">
     <img id="lb-img" alt="">
+    <video id="lb-vid" controls loop hidden></video>
     <aside>
       <pre id="lb-prompt"></pre>
       <div id="lb-caption" class="caption"></div>
+
+      <div id="animate-box" class="animate" hidden>
+        <h3>Animate this frame</h3>
+        <textarea id="an-prompt" rows="2" placeholder="hair drifting, cursed energy swirling, slow push in"></textarea>
+        <p class="hint">Describe motion only. The frame itself is already fixed.</p>
+        <div class="row">
+          <label>Seconds <input id="an-seconds" type="number" value="3" min="1" max="5" step="0.5"></label>
+          <label>Canvas <select id="an-size">
+            <option value="story">9:16</option>
+            <option value="portrait">4:5</option>
+            <option value="square">1:1</option>
+          </select></label>
+        </div>
+        <button id="an-go" class="primary small">Queue clip</button>
+      </div>
       <div class="lb-actions">
         <button id="lb-fav" class="ghost">☆ Favourite</button>
         <button id="lb-caption-btn" class="ghost">Draft caption</button>
+        <button id="lb-animate" class="ghost">Animate</button>
         <a id="lb-download" class="btn ghost" download>Download</a>
         <button id="lb-delete" class="ghost danger">Delete</button>
         <button id="lb-close" class="ghost">Close</button>

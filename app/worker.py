@@ -7,6 +7,7 @@ it just leaves it queued and tries again. Jobs drain when the PC wakes.
 import asyncio
 import json
 import uuid
+from pathlib import Path
 
 from PIL import Image
 
@@ -14,8 +15,11 @@ from . import comfy, imageops
 from .config import DATA, OUT, REFS, THUMBS
 from .db import db, loads
 
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
 POLL_IDLE = 20     # nothing to do / node asleep
 POLL_ACTIVE = 2    # a render is in flight
+MAX_ATTEMPTS = 5   # requeue ceiling; see _release
 
 _state = {"online": False, "current": None, "last_error": ""}
 
@@ -34,15 +38,29 @@ async def _claim():
         if not row:
             return None
         conn.execute(
-            "UPDATE jobs SET status='running', started_at=datetime('now') WHERE id=?",
+            "UPDATE jobs SET status='running', started_at=datetime('now'), "
+            "attempts=attempts+1 WHERE id=?",
             (row["id"],),
         )
         return dict(row)
 
 
-def _release(job_id: int):
-    """Put a job back on the queue - used when the node vanishes mid-flight."""
+def _release(job_id: int, reason: str = ""):
+    """Put a job back on the queue - used when the node vanishes mid-flight.
+
+    A sleeping PC is indistinguishable from a ComfyUI that crashes on this
+    particular graph, and the latter would requeue forever. So requeues are
+    capped: past MAX_ATTEMPTS the job is failed rather than left to spin.
+    """
     with db() as conn:
+        row = conn.execute("SELECT attempts FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row and row["attempts"] >= MAX_ATTEMPTS:
+            conn.execute(
+                "UPDATE jobs SET status='failed', finished_at=datetime('now'), error=? "
+                "WHERE id=? AND status='running'",
+                (f"gave up after {MAX_ATTEMPTS} attempts; last: {reason}"[:1000], job_id),
+            )
+            return
         conn.execute(
             "UPDATE jobs SET status='queued', started_at=NULL WHERE id=? AND status='running'",
             (job_id,),
@@ -70,7 +88,15 @@ async def _run(job: dict):
     params = loads(job["params"])
     ref_name = None
 
-    if job["ref_id"]:
+    # Animating a previously generated image: the source lives in OUT, not REFS.
+    if params.get("workflow") == "wan_i2v" and job["src_image_id"]:
+        with db() as conn:
+            img = conn.execute("SELECT * FROM images WHERE id=?", (job["src_image_id"],)).fetchone()
+        if not img:
+            raise comfy.ComfyError("source image no longer exists")
+        ref_name = await comfy.upload_image(OUT / img["filename"])
+
+    elif job["ref_id"]:
         with db() as conn:
             ref = conn.execute("SELECT * FROM refs WHERE id=?", (job["ref_id"],)).fetchone()
         if ref:
@@ -111,11 +137,18 @@ async def _run(job: dict):
 
         saved = 0
         for node in outputs.values():
-            for img in node.get("images", []):
+            files = []
+            for key in ("images", "gifs", "videos"):
+                files.extend(node.get(key, []))
+            for img in files:
+                if not isinstance(img, dict) or "filename" not in img:
+                    continue
                 data = await comfy.fetch(img["filename"], img.get("subfolder", ""), img.get("type", "output"))
-                name = f"{job['id']}_{seed}_{saved}.png"
+                ext = Path(img["filename"]).suffix.lower() or ".png"
+                name = f"{job['id']}_{seed}_{saved}{ext}"
                 (OUT / name).write_bytes(data)
-                _thumb(name)
+                if ext in IMAGE_EXT:
+                    _thumb(name)
                 with db() as conn:
                     conn.execute(
                         "INSERT INTO images (job_id, filename, seed) VALUES (?,?,?)",
@@ -154,7 +187,7 @@ async def loop():
             _state["last_error"] = ""
         except comfy.ComfyOffline as e:
             # Not a failure. The PC went to sleep; requeue and wait it out.
-            _release(job["id"])
+            _release(job["id"], str(e))
             _state["online"] = False
             _state["last_error"] = f"node went away: {e}"
             await asyncio.sleep(POLL_IDLE)

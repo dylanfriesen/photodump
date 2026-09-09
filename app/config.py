@@ -75,3 +75,20 @@ def outpaint_pads(w: int, h: int, target: str, anchor: str = "center") -> dict:
         "top": up8(h, top) if top else top,
         "bottom": up8(h + top, bottom) if bottom else bottom,
     }
+
+
+# --- video (WAN 2.2 TI2V-5B) -------------------------------------------
+# The 5B variant is single-model and fits 16GB comfortably; the 14B needs
+# dual high/low-noise models and GGUF quantisation to be worth attempting.
+#
+# NOTE: the stock WAN workflows ship an fp8_e4m3fn text encoder, which is
+# exactly the format broken on RDNA4/Windows. Use the fp16 or GGUF encoder.
+WAN_UNET = os.getenv("WAN_UNET", "wan2.2_ti2v_5B_fp16.safetensors")
+WAN_CLIP = os.getenv("WAN_CLIP", "umt5_xxl_fp16.safetensors")
+WAN_VAE = os.getenv("WAN_VAE", "wan2.2_vae.safetensors")
+
+VIDEO_SIZES = {
+    "story": (704, 1280),     # 9:16 reels
+    "portrait": (704, 896),   # 4:5 feed
+    "square": (960, 960),
+}

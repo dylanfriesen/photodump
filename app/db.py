@@ -74,9 +74,25 @@ def db():
         conn.close()
 
 
+# Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
+# EXISTS", so each is attempted and its duplicate error swallowed.
+MIGRATIONS = [
+    "ALTER TABLE jobs ADD COLUMN src_image_id INTEGER",
+    "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE refs ADD COLUMN width INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE refs ADD COLUMN height INTEGER NOT NULL DEFAULT 0",
+]
+
+
 def init():
     with db() as conn:
         conn.executescript(SCHEMA)
+        for stmt in MIGRATIONS:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
 
 def rows(cur):

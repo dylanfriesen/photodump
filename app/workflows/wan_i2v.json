@@ -1,0 +1,50 @@
+{
+  "20": {
+    "class_type": "UNETLoader",
+    "inputs": {"unet_name": "__WAN_UNET__", "weight_dtype": "default"}
+  },
+  "21": {
+    "class_type": "CLIPLoader",
+    "inputs": {"clip_name": "__WAN_CLIP__", "type": "wan", "device": "default"}
+  },
+  "22": {
+    "class_type": "VAELoader",
+    "inputs": {"vae_name": "__WAN_VAE__"}
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {"image": "__REF__"}
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {"text": "__POS__", "clip": ["21", 0]}
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {"text": "__NEG__", "clip": ["21", 0]}
+  },
+  "23": {
+    "class_type": "Wan22ImageToVideoLatent",
+    "inputs": {
+      "width": 704, "height": 1280, "length": 49, "batch_size": 1,
+      "vae": ["22", 0], "start_image": ["10", 0]
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0, "steps": 20, "cfg": 5.0,
+      "sampler_name": "uni_pc", "scheduler": "simple", "denoise": 1.0,
+      "model": ["20", 0], "positive": ["6", 0], "negative": ["7", 0],
+      "latent_image": ["23", 0]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {"samples": ["3", 0], "vae": ["22", 0]}
+  },
+  "24": {
+    "class_type": "SaveWEBM",
+    "inputs": {"filename_prefix": "forge_vid", "codec": "vp9", "fps": 16.0, "crf": 32.0, "images": ["8", 0]}
+  }
+}
