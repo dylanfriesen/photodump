@@ -174,10 +174,24 @@ bounding the shot with `-frames:v`. This was a real bug here, not a hypothetical
 
 ## Editing
 
-Not built here, deliberately. For CapCut-style hand-finishing use **OpenCut**
-(self-hosted, browser-based, multi-track timeline) or DaVinci Resolve on the
-desktop. photodump's job is to produce and auto-assemble assets; a mature NLE
-is where they get finished.
+Not built here, deliberately — rebuilding a mature NLE is not a good use of
+effort. photodump produces and auto-assembles assets; a real editor finishes
+them.
+
+**Do not reach for OpenCut.** Checked 2026-09-09: the project is mid-rewrite.
+`main` is a scaffold — three routes, mostly shadcn UI components, and an
+`/editor` route whose entire body is "Coming soon." No branch carries a
+Dockerfile, and the web app now targets Cloudflare Workers via `wrangler`.
+The widely-cited "self-hosted CapCut alternative with Docker" write-ups
+describe a pre-rewrite version that is no longer in the repository.
+
+Use instead, on the desktop where the GPU is:
+
+- **DaVinci Resolve** — free, Windows, GPU-accelerated, far beyond CapCut
+- **Kdenlive** or **Shotcut** — lighter, open source, multi-track
+- **CapCut** itself
+
+Worth re-checking OpenCut once its rewrite lands.
 
 ## Failure semantics
 

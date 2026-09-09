@@ -185,9 +185,11 @@ second thing that can be down independently.
 `--listen 0.0.0.0 --port 8188`. Then reconcile each workflow JSON against
 `GET /object_info`. Nothing else matters until renders actually come out.
 
-**P1 — Deploy OpenCut** for CapCut-style hand-finishing. Deliberately not built
-here: rebuilding a mature NLE is not a good use of effort. photodump produces
-and auto-assembles; a real editor finishes.
+**Editing — do NOT deploy OpenCut.** Checked 2026-09-09: mid-rewrite, `main` is
+a scaffold whose `/editor` route body is literally "Coming soon", and no branch
+has a Dockerfile. The popular "self-hosted CapCut alternative" articles describe
+a version no longer in the repo. Use DaVinci Resolve / Kdenlive / Shotcut on the
+desktop instead. Rebuilding an NLE here is still not worth it.
 
 **P2 — Batch seed variation** (same prompt, n seeds, contact sheet), **LoRA
 stacking**, **ControlNet pose** from a reference.
