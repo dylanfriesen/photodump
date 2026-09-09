@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>anime-forge</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>anime<span>-forge</span></h1>
+  <div class="node" id="node">
+    <span class="dot" id="node-dot"></span>
+    <span id="node-text">checking render node…</span>
+  </div>
+</header>
+
+<main>
+  <!-- ============ forge ============ -->
+  <section class="panel forge">
+    <nav class="tabs sub">
+      <button data-task="fuse" class="active">Fuse</button>
+      <button data-task="extend">Extend</button>
+    </nav>
+
+    <div class="task" data-task="fuse">
+    <label>Source A
+      <input id="subject-a" placeholder="gardevoir" autocomplete="off">
+    </label>
+    <label>Source B
+      <input id="subject-b" placeholder="gojo satoru" autocomplete="off">
+    </label>
+
+    <label>Blend
+      <select id="mode"></select>
+    </label>
+    <p class="hint" id="mode-hint"></p>
+
+    <label>Extra direction
+      <textarea id="extra" rows="2" placeholder="blindfold, cursed energy, neon rain"></textarea>
+    </label>
+    <label>Avoid
+      <input id="negative" placeholder="extra tags to suppress" autocomplete="off">
+    </label>
+
+    <div class="row">
+      <label>Canvas <select id="aspect"></select></label>
+      <label>Count <input id="count" type="number" value="4" min="1" max="8"></label>
+    </div>
+
+    <details>
+      <summary>Reference image &amp; sampler</summary>
+      <label>Reference
+        <select id="ref"><option value="">none</option></select>
+      </label>
+      <label>How to use it
+        <select id="workflow">
+          <option value="">auto</option>
+          <option value="img2img">img2img — keep the composition</option>
+          <option value="ipadapter">IP-Adapter — borrow the look only</option>
+          <option value="txt2img">ignore the reference</option>
+        </select>
+      </label>
+      <div class="row">
+        <label>Denoise <input id="denoise" type="number" step="0.05" min="0.1" max="1" value="0.65"></label>
+        <label>IP weight <input id="ip-weight" type="number" step="0.05" min="0.1" max="1.5" value="0.7"></label>
+      </div>
+      <div class="row">
+        <label>Steps <input id="steps" type="number" value="30" min="8" max="60"></label>
+        <label>CFG <input id="cfg" type="number" step="0.5" value="5" min="1" max="12"></label>
+      </div>
+      <label>Checkpoint
+        <select id="checkpoint"><option value="">default</option></select>
+      </label>
+    </details>
+
+    <div class="actions">
+      <button id="btn-preview" class="ghost">Preview tags</button>
+      <button id="btn-generate" class="primary">Queue render</button>
+    </div>
+    <pre id="preview" hidden></pre>
+
+    <h3>Starters</h3>
+    <div id="starters" class="chips"></div>
+    <div class="actions">
+      <button id="btn-save-recipe" class="ghost small">Save as recipe</button>
+    </div>
+    <div id="recipes" class="chips"></div>
+    </div>
+
+    <!-- ---- extend / outpaint ---- -->
+    <div class="task" data-task="extend" hidden>
+      <p class="hint">Grow a photo onto a new canvas. Your original pixels are never cropped &mdash; the model invents only the new territory.</p>
+      <label>Source image
+        <select id="ex-ref"><option value="">upload one in References</option></select>
+      </label>
+      <label>Extend to
+        <select id="ex-target">
+          <option value="portrait">portrait 4:5</option>
+          <option value="story">story 9:16</option>
+          <option value="square">square 1:1</option>
+          <option value="landscape">landscape 3:2</option>
+        </select>
+      </label>
+      <label>Keep the original
+        <select id="ex-anchor">
+          <option value="center">centred</option>
+          <option value="top">at the top</option>
+          <option value="bottom">at the bottom</option>
+        </select>
+      </label>
+      <label>Describe the whole scene
+        <textarea id="ex-prompt" rows="3" placeholder="a wide mountain valley at golden hour, sky above, meadow below"></textarea>
+      </label>
+      <p class="hint">Describe the finished picture, not just the new parts &mdash; the sampler is filling in around what is already there.</p>
+      <div class="row">
+        <label>Feathering <input id="ex-feather" type="number" value="40" min="0" max="120"></label>
+        <label>Count <input id="ex-count" type="number" value="1" min="1" max="4"></label>
+      </div>
+      <div class="actions">
+        <button id="btn-extend" class="primary">Queue extend</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ output ============ -->
+  <section class="panel output">
+    <nav class="tabs">
+      <button data-tab="gallery" class="active">Gallery</button>
+      <button data-tab="queue">Queue <span class="badge" id="queue-badge">0</span></button>
+      <button data-tab="refs">References</button>
+    </nav>
+
+    <div class="tab" data-tab="gallery">
+      <div class="toolbar">
+        <label class="inline"><input type="checkbox" id="only-fav"> favourites only</label>
+      </div>
+      <div id="grid" class="grid"></div>
+      <p class="empty" id="gallery-empty">Nothing rendered yet.</p>
+    </div>
+
+    <div class="tab" data-tab="queue" hidden>
+      <div id="jobs"></div>
+    </div>
+
+    <div class="tab" data-tab="refs" hidden>
+      <form id="ref-form" class="ref-form">
+        <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" required>
+        <input type="text" id="ref-label" placeholder="label (e.g. gojo ref)">
+        <select id="ref-kind">
+          <option value="character">character</option>
+          <option value="style">style</option>
+          <option value="pose">pose</option>
+        </select>
+        <button class="primary small">Upload</button>
+      </form>
+      <div id="ref-grid" class="grid refs"></div>
+    </div>
+  </section>
+</main>
+
+<!-- lightbox -->
+<div id="lightbox" hidden>
+  <div class="lb-inner">
+    <img id="lb-img" alt="">
+    <aside>
+      <pre id="lb-prompt"></pre>
+      <div id="lb-caption" class="caption"></div>
+      <div class="lb-actions">
+        <button id="lb-fav" class="ghost">☆ Favourite</button>
+        <button id="lb-caption-btn" class="ghost">Draft caption</button>
+        <a id="lb-download" class="btn ghost" download>Download</a>
+        <button id="lb-delete" class="ghost danger">Delete</button>
+        <button id="lb-close" class="ghost">Close</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

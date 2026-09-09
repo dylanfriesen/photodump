@@ -1,0 +1,15 @@
+services:
+  anime-forge:
+    build: .
+    container_name: anime-forge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8096:8000"
+    volumes:
+      - ./data:/srv/data
+    environment:
+      - COMFY_HOST=${COMFY_HOST:-100.109.223.93}
+      - COMFY_PORT=${COMFY_PORT:-8188}
+      - OLLAMA_URL=${OLLAMA_URL:-http://100.109.223.93:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:14b-instruct}
+      - CHECKPOINT=${CHECKPOINT:-waiNSFWIllustrious_v140.safetensors}
