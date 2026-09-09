@@ -4,236 +4,430 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>photodump</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body data-node="asleep">
+<div class="ambient"></div>
+
 <header>
-  <h1>photo<span>dump</span></h1>
-  <div class="node" id="node">
-    <span class="dot" id="node-dot"></span>
-    <span id="node-text">checking render node…</span>
-  </div>
+  <span class="mark"><i></i></span>
+  <span class="wordmark">photodump</span>
+  <span class="tagchip">studio</span>
+  <span class="spacer"></span>
+  <span class="who">dylan@kanto</span>
 </header>
 
-<main>
-  <!-- ============ studio ============ -->
-  <section class="panel studio">
+<div class="shell">
+
+  <!-- ==================== studio ==================== -->
+  <aside class="panel studio">
+
+    <div class="studio-head">
+      <div class="node">
+        <div class="wash"></div>
+        <div class="node-inner">
+          <div class="node-cap">
+            <span class="cap">render node</span>
+            <span class="rule"></span>
+            <span class="cap" style="letter-spacing:.08em">kanto</span>
+          </div>
+          <div class="node-row">
+            <span id="node-dot"></span>
+            <span id="node-text">checking render node…</span>
+            <span class="node-meter">
+              <span class="node-bars" id="node-bars"></span>
+              <span id="queue-badge">0</span>
+            </span>
+          </div>
+        </div>
+        <div class="node-rule"><i></i></div>
+      </div>
+    </div>
+
     <nav class="tabs sub">
-      <button data-task="fuse" class="active">Fuse</button>
-      <button data-task="extend">Extend</button>
-      <button data-task="reel">Reel</button>
+      <button data-task="fuse" class="active"><span>Fuse</span></button>
+      <button data-task="extend"><span>Extend</span></button>
+      <button data-task="reel"><span>Reel</span><span class="server"></span></button>
     </nav>
 
-    <div class="task" data-task="fuse">
-    <label>Source A
-      <input id="subject-a" placeholder="gardevoir" autocomplete="off">
-    </label>
-    <label>Source B
-      <input id="subject-b" placeholder="gojo satoru" autocomplete="off">
-    </label>
+    <div class="studio-body">
 
-    <label>Blend
-      <select id="mode"></select>
-    </label>
-    <p class="hint" id="mode-hint"></p>
+      <!-- ---------- fuse ---------- -->
+      <div class="task" data-task="fuse">
+        <div class="f2">
+          <label class="f"><span class="cap">source a</span>
+            <input id="subject-a" type="text" placeholder="gardevoir" autocomplete="off"></label>
+          <label class="f"><span class="cap">source b</span>
+            <input id="subject-b" type="text" placeholder="gojo satoru" autocomplete="off"></label>
+        </div>
 
-    <label>Extra direction
-      <textarea id="extra" rows="2" placeholder="blindfold, cursed energy, neon rain"></textarea>
-    </label>
-    <label>Avoid
-      <input id="negative" placeholder="extra tags to suppress" autocomplete="off">
-    </label>
+        <div class="f">
+          <span class="cap">blend</span>
+          <select id="mode"></select>
+          <span id="mode-hint" class="hint rail"></span>
+        </div>
 
-    <div class="row">
-      <label>Canvas <select id="aspect"></select></label>
-      <label>Count <input id="count" type="number" value="4" min="1" max="8"></label>
+        <label class="f"><span class="cap">extra direction</span>
+          <textarea id="extra" rows="2" placeholder="blindfold, cursed energy, neon rain"></textarea></label>
+
+        <label class="f"><span class="cap">avoid</span>
+          <input id="negative" type="text" placeholder="text, watermark, extra limbs" autocomplete="off"></label>
+
+        <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end">
+          <div class="f"><span class="cap">canvas</span>
+            <div id="aspect" class="seg"></div>
+          </div>
+          <div class="f"><span class="cap">count</span>
+            <div class="stepper">
+              <button type="button" data-step="-1">&minus;</button>
+              <input id="count" type="number" value="4" min="1" max="8">
+              <button type="button" data-step="1">+</button>
+            </div>
+          </div>
+        </div>
+
+        <details class="disc">
+          <summary>
+            <span class="caret"></span>
+            <span>Reference image &amp; sampler</span>
+            <span class="spacer"></span>
+            <span class="count" id="adv-count" hidden>0 set</span>
+          </summary>
+          <div class="body">
+            <label class="f"><span class="cap">reference</span><select id="ref"></select></label>
+            <label class="f"><span class="cap">how to use it</span>
+              <select id="workflow">
+                <option value="">auto</option>
+                <option value="img2img">img2img — keep the composition</option>
+                <option value="ipadapter">IP-Adapter — borrow the look only</option>
+                <option value="txt2img">ignore the reference</option>
+              </select></label>
+            <div class="f2">
+              <label class="f"><span class="cap">denoise</span>
+                <input id="denoise" class="mono-in" type="number" step="0.05" min="0.1" max="1" value="0.65"></label>
+              <label class="f"><span class="cap">ip weight</span>
+                <input id="ip-weight" class="mono-in" type="number" step="0.05" min="0.1" max="1.5" value="0.7"></label>
+            </div>
+            <div class="f2">
+              <label class="f"><span class="cap">steps</span>
+                <input id="steps" class="mono-in" type="number" min="8" max="60" value="30"></label>
+              <label class="f"><span class="cap">cfg</span>
+                <input id="cfg" class="mono-in" type="number" step="0.5" min="1" max="12" value="5"></label>
+            </div>
+            <label class="f"><span class="cap">checkpoint</span><select id="checkpoint"></select></label>
+          </div>
+        </details>
+
+        <div style="display:flex;gap:8px">
+          <button id="btn-preview" class="btn">Preview tags</button>
+          <button id="btn-generate" class="btn go" style="flex:1">
+            <span>Queue render</span><span class="qty" id="gen-qty">&times;4</span>
+          </button>
+        </div>
+        <div class="hint tight" data-queue-hint></div>
+
+        <div id="preview" hidden>
+          <div class="head">
+            <span class="cap">compiled tags</span>
+            <span class="meta" id="preview-count"></span>
+            <span class="spacer"></span>
+            <button class="linkbtn" id="preview-copy" style="color:var(--mute-3)">copy</button>
+          </div>
+          <div class="body" id="preview-body"></div>
+        </div>
+
+        <div class="sec">
+          <span class="cap">starters</span>
+          <div id="starters" class="chips"></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head">
+            <span class="cap">saved recipes</span>
+            <span class="spacer"></span>
+            <button id="btn-save-recipe" class="linkbtn">+ save current</button>
+          </div>
+          <div id="recipes" class="chips"></div>
+        </div>
+      </div>
+
+      <!-- ---------- extend ---------- -->
+      <div class="task" data-task="extend" hidden>
+        <div class="callout teal">
+          <span class="sq"></span>
+          <span>Your original pixels are never cropped. The model only invents the new territory around them.</span>
+        </div>
+
+        <label class="f"><span class="cap">source image</span><select id="ex-ref"></select></label>
+
+        <div class="f2">
+          <div class="f"><span class="cap">extend to</span>
+            <div id="ex-target" class="seg">
+              <span data-value="portrait" class="on">4:5</span>
+              <span data-value="story">9:16</span>
+              <span data-value="square">1:1</span>
+              <span data-value="landscape">3:2</span>
+            </div>
+          </div>
+          <div class="f"><span class="cap">anchor original</span>
+            <div id="ex-anchor" class="seg sans">
+              <span data-value="top">top</span>
+              <span data-value="center" class="on">centred</span>
+              <span data-value="bottom">bottom</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="f">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="cap">scene description</span>
+            <span class="spacer"></span>
+            <span class="pill-lime">read this</span>
+          </div>
+          <div class="readthis">Describe the <strong>finished picture</strong>, not just the new parts. The sampler is filling in <em>around</em> what is already there.</div>
+          <textarea id="ex-prompt" rows="4" placeholder="a wide mountain valley at golden hour, tall sky above, meadow below"></textarea>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end">
+          <div class="f">
+            <div style="display:flex;align-items:baseline;gap:7px">
+              <span class="cap">feathering</span>
+              <span class="meta" id="feather-val">40px</span>
+            </div>
+            <div class="slider">
+              <div class="fill"></div><div class="knob"></div>
+              <input id="ex-feather" type="range" min="0" max="120" value="40">
+            </div>
+          </div>
+          <div class="f"><span class="cap">count</span>
+            <div class="stepper">
+              <button type="button" data-step="-1">&minus;</button>
+              <input id="ex-count" type="number" value="1" min="1" max="4">
+              <button type="button" data-step="1">+</button>
+            </div>
+          </div>
+        </div>
+
+        <button id="btn-extend" class="btn go wide">
+          <span>Queue extend</span><span class="qty" id="ex-qty">&times;1</span>
+        </button>
+        <div class="hint tight" data-queue-hint></div>
+      </div>
+
+      <!-- ---------- reel ---------- -->
+      <div class="task" data-task="reel" hidden>
+        <div class="callout teal">
+          <span class="dot"></span>
+          <span><strong>Reels build on the always-on server.</strong> This is the one task that runs immediately, even while the desktop sleeps.</span>
+        </div>
+
+        <div class="sel-summary">
+          <span style="display:flex;align-items:baseline;gap:6px">
+            <span id="sel-count">0</span><span class="lbl">selected</span>
+          </span>
+          <span class="spacer"></span>
+          <button id="sel-favs" class="btn">use favourites</button>
+          <button id="sel-clear" class="btn" style="background:none">clear</button>
+        </div>
+        <div class="hint tight">Click stills in the gallery to add them, in order.</div>
+
+        <div class="f"><span class="cap">cut timing</span>
+          <div id="re-timing" class="seg sans">
+            <span data-value="bpm" class="on">on the beat</span>
+            <span data-value="fixed">fixed seconds</span>
+          </div>
+        </div>
+
+        <div id="re-bpm-row" class="f2">
+          <label class="f"><span class="cap">bpm</span>
+            <input id="re-bpm" class="mono-in" type="number" min="40" max="220" value="120"></label>
+          <label class="f"><span class="cap">beats / shot</span>
+            <input id="re-beats" class="mono-in" type="number" min="1" max="16" value="4"></label>
+        </div>
+        <div id="re-secs-row" hidden>
+          <label class="f"><span class="cap">seconds / shot</span>
+            <input id="re-seconds" class="mono-in" type="number" step="0.25" min="0.4" max="10" value="2"></label>
+        </div>
+
+        <div class="f2">
+          <label class="f"><span class="cap">motion</span>
+            <select id="re-motion">
+              <option value="kenburns">Ken Burns</option>
+              <option value="none">static</option>
+            </select></label>
+          <label class="f"><span class="cap">between</span>
+            <select id="re-transition">
+              <option value="cut">hard cut</option>
+              <option value="crossfade">crossfade</option>
+            </select></label>
+        </div>
+
+        <label class="f"><span class="cap">music</span>
+          <span class="audio-row">
+            <span class="wave"><i style="height:5px"></i><i style="height:11px"></i><i style="height:7px"></i><i style="height:13px"></i><i style="height:4px"></i><i style="height:9px"></i></span>
+            <select id="re-audio"></select>
+          </span></label>
+
+        <div id="re-length"></div>
+
+        <button id="btn-reel" class="btn teal wide">
+          <span>Build reel</span><span class="note">server-side · builds now</span>
+        </button>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- ==================== output ==================== -->
+  <section class="output">
+    <div class="out-head">
+      <nav class="tabs">
+        <button data-tab="gallery" class="active"><span>Gallery</span><span class="badge" id="gallery-badge" hidden></span></button>
+        <button data-tab="queue"><span>Queue</span><span class="badge" id="queue-tab-badge" hidden></span></button>
+        <button data-tab="refs"><span>References</span></button>
+      </nav>
+      <span class="spacer"></span>
+      <label class="check" data-gallery-only>
+        <input type="checkbox" id="only-fav"><span class="box"></span>
+        <span>favourites only</span>
+      </label>
+      <span class="vr" data-gallery-only></span>
+      <span class="meta" id="gallery-meta" data-gallery-only></span>
     </div>
 
-    <details>
-      <summary>Reference image &amp; sampler</summary>
-      <label>Reference
-        <select id="ref"><option value="">none</option></select>
-      </label>
-      <label>How to use it
-        <select id="workflow">
-          <option value="">auto</option>
-          <option value="img2img">img2img — keep the composition</option>
-          <option value="ipadapter">IP-Adapter — borrow the look only</option>
-          <option value="txt2img">ignore the reference</option>
-        </select>
-      </label>
-      <div class="row">
-        <label>Denoise <input id="denoise" type="number" step="0.05" min="0.1" max="1" value="0.65"></label>
-        <label>IP weight <input id="ip-weight" type="number" step="0.05" min="0.1" max="1.5" value="0.7"></label>
-      </div>
-      <div class="row">
-        <label>Steps <input id="steps" type="number" value="30" min="8" max="60"></label>
-        <label>CFG <input id="cfg" type="number" step="0.5" value="5" min="1" max="12"></label>
-      </div>
-      <label>Checkpoint
-        <select id="checkpoint"><option value="">default</option></select>
-      </label>
-    </details>
-
-    <div class="actions">
-      <button id="btn-preview" class="ghost">Preview tags</button>
-      <button id="btn-generate" class="primary">Queue render</button>
-    </div>
-    <pre id="preview" hidden></pre>
-
-    <h3>Starters</h3>
-    <div id="starters" class="chips"></div>
-    <div class="actions">
-      <button id="btn-save-recipe" class="ghost small">Save as recipe</button>
-    </div>
-    <div id="recipes" class="chips"></div>
-    </div>
-
-    <!-- ---- extend / outpaint ---- -->
-    <div class="task" data-task="extend" hidden>
-      <p class="hint">Grow a photo onto a new canvas. Your original pixels are never cropped &mdash; the model invents only the new territory.</p>
-      <label>Source image
-        <select id="ex-ref"><option value="">upload one in References</option></select>
-      </label>
-      <label>Extend to
-        <select id="ex-target">
-          <option value="portrait">portrait 4:5</option>
-          <option value="story">story 9:16</option>
-          <option value="square">square 1:1</option>
-          <option value="landscape">landscape 3:2</option>
-        </select>
-      </label>
-      <label>Keep the original
-        <select id="ex-anchor">
-          <option value="center">centred</option>
-          <option value="top">at the top</option>
-          <option value="bottom">at the bottom</option>
-        </select>
-      </label>
-      <label>Describe the whole scene
-        <textarea id="ex-prompt" rows="3" placeholder="a wide mountain valley at golden hour, sky above, meadow below"></textarea>
-      </label>
-      <p class="hint">Describe the finished picture, not just the new parts &mdash; the sampler is filling in around what is already there.</p>
-      <div class="row">
-        <label>Feathering <input id="ex-feather" type="number" value="40" min="0" max="120"></label>
-        <label>Count <input id="ex-count" type="number" value="1" min="1" max="4"></label>
-      </div>
-      <div class="actions">
-        <button id="btn-extend" class="primary">Queue extend</button>
-      </div>
-    </div>
-
-    <!-- ---- reel ---- -->
-    <div class="task" data-task="reel" hidden>
-      <p class="hint">Click stills in the gallery to add them, in order. Renders
-      here on kanto &mdash; no GPU, so it works while the desktop sleeps.</p>
-      <div class="sel-summary">
-        <strong id="sel-count">0</strong> selected
-        <button id="sel-clear" class="ghost small">clear</button>
-        <button id="sel-favs" class="ghost small">use favourites</button>
-      </div>
-      <label>Cut timing
-        <select id="re-timing">
-          <option value="bpm">on the beat (BPM)</option>
-          <option value="fixed">fixed seconds</option>
-        </select>
-      </label>
-      <div class="row" id="re-bpm-row">
-        <label>BPM <input id="re-bpm" type="number" value="120" min="40" max="220"></label>
-        <label>Beats/shot <input id="re-beats" type="number" value="4" min="1" max="16"></label>
-      </div>
-      <label id="re-secs-row" hidden>Seconds per shot
-        <input id="re-seconds" type="number" value="2" step="0.25" min="0.4" max="10">
-      </label>
-      <div class="row">
-        <label>Motion <select id="re-motion">
-          <option value="kenburns">Ken Burns</option>
-          <option value="none">static</option>
-        </select></label>
-        <label>Between <select id="re-transition">
-          <option value="cut">hard cut</option>
-          <option value="crossfade">crossfade</option>
-        </select></label>
-      </div>
-      <label>Music
-        <select id="re-audio"><option value="">none</option></select>
-      </label>
-      <p class="hint" id="re-length"></p>
-      <div class="actions">
-        <button id="btn-reel" class="primary">Build reel</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ output ============ -->
-  <section class="panel output">
-    <nav class="tabs">
-      <button data-tab="gallery" class="active">Gallery</button>
-      <button data-tab="queue">Queue <span class="badge" id="queue-badge">0</span></button>
-      <button data-tab="refs">References</button>
-    </nav>
-
+    <!-- gallery -->
     <div class="tab" data-tab="gallery">
-      <div class="toolbar">
-        <label class="inline"><input type="checkbox" id="only-fav"> favourites only</label>
+      <div class="picking-bar" id="picking-bar" hidden>
+        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:var(--teal);box-shadow:0 0 8px rgba(79,214,192,.8)"></span>
+        <span class="lead">Reel selection on</span>
+        <span class="sub">click stills to add them in order · clips and reels can't be used as shots</span>
+        <span class="spacer"></span>
+        <span class="n" id="picking-count"></span>
       </div>
-      <div id="grid" class="grid"></div>
-      <p class="empty" id="gallery-empty">Nothing rendered yet.</p>
+      <div id="grid"></div>
+      <div id="gallery-empty" hidden>
+        <div class="frames"><i style="height:65px"></i><i style="height:92px"></i><i style="height:65px"></i></div>
+        <div class="copy">
+          <h3>Nothing rendered yet</h3>
+          <p>Queue something from the studio panel. It will sit in the queue and land here when the desktop next wakes.</p>
+        </div>
+        <div class="chips" id="empty-starters"></div>
+      </div>
+      <div class="strip" id="strip" hidden>
+        <div class="left">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="cap" style="color:var(--teal)">cut order</span>
+            <span class="meta">click a shot to remove it</span>
+          </div>
+          <div class="shots" id="strip-shots"></div>
+        </div>
+        <div class="vr"></div>
+        <div class="right">
+          <div class="total" id="strip-total"></div>
+          <button class="btn teal" data-build-reel><span>Build reel</span><span class="note">builds now</span></button>
+        </div>
+      </div>
     </div>
 
-    <div class="tab" data-tab="queue" hidden>
+    <!-- queue -->
+    <div class="tab scroll" data-tab="queue" hidden>
+      <div class="sec-rule">
+        <span class="cap">job queue</span>
+        <span class="rule"></span>
+        <span class="meta" id="queue-meta"></span>
+      </div>
       <div id="jobs"></div>
     </div>
 
-    <div class="tab" data-tab="refs" hidden>
-      <form id="ref-form" class="ref-form">
-        <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp,audio/*" required>
-        <input type="text" id="ref-label" placeholder="label (e.g. gojo ref)">
-        <select id="ref-kind">
-          <option value="character">character</option>
-          <option value="style">style</option>
-          <option value="pose">pose</option>
-          <option value="audio">audio</option>
-        </select>
-        <button class="primary small">Upload</button>
+    <!-- references -->
+    <div class="tab scroll" data-tab="refs" hidden>
+      <form id="ref-form">
+        <label class="f"><span class="cap">file</span>
+          <span class="drop" id="drop-label"><i></i><span id="drop-text">drop an image, or browse</span>
+            <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp,audio/*" required>
+          </span></label>
+        <label class="f"><span class="cap">label</span>
+          <input id="ref-label" type="text" placeholder="gojo — blindfold"></label>
+        <label class="f"><span class="cap">kind</span>
+          <select id="ref-kind">
+            <option value="character">character</option>
+            <option value="style">style</option>
+            <option value="pose">pose</option>
+            <option value="audio">audio</option>
+          </select></label>
+        <button class="btn">Upload</button>
       </form>
-      <div id="ref-grid" class="grid refs"></div>
+      <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">
+        <div class="sec-rule" style="padding-bottom:0">
+          <span class="cap">library</span>
+          <span class="rule"></span>
+          <span class="meta" id="refs-meta"></span>
+        </div>
+        <div id="ref-grid"></div>
+      </div>
     </div>
   </section>
-</main>
+</div>
 
-<!-- lightbox -->
+<!-- ==================== lightbox ==================== -->
 <div id="lightbox" hidden>
-  <div class="lb-inner">
-    <img id="lb-img" alt="">
-    <video id="lb-vid" controls loop hidden></video>
-    <aside>
-      <pre id="lb-prompt"></pre>
-      <div id="lb-caption" class="caption"></div>
-
-      <div id="animate-box" class="animate" hidden>
-        <h3>Animate this frame</h3>
-        <textarea id="an-prompt" rows="2" placeholder="hair drifting, cursed energy swirling, slow push in"></textarea>
-        <p class="hint">Describe motion only. The frame itself is already fixed.</p>
-        <div class="row">
-          <label>Seconds <input id="an-seconds" type="number" value="3" min="1" max="5" step="0.5"></label>
-          <label>Canvas <select id="an-size">
-            <option value="story">9:16</option>
-            <option value="portrait">4:5</option>
-            <option value="square">1:1</option>
-          </select></label>
+  <div class="lb-frame">
+    <div class="lb-head">
+      <span class="id" id="lb-id"></span>
+      <span class="meta" id="lb-meta"></span>
+      <span class="spacer"></span>
+      <button id="lb-close">&times;</button>
+    </div>
+    <div class="lb-body">
+      <div class="lb-stage">
+        <img id="lb-img" alt="">
+        <video id="lb-vid" controls loop hidden></video>
+      </div>
+      <aside class="lb-side">
+        <div class="lb-scroll">
+          <div class="f">
+            <span class="cap">prompt</span>
+            <pre id="lb-prompt"></pre>
+          </div>
+          <div class="f">
+            <span class="cap">caption</span>
+            <div id="lb-caption"></div>
+          </div>
+          <div class="lb-acts">
+            <button id="lb-fav" class="btn"><span>&#9733;</span><span>Favourite</span></button>
+            <button id="lb-caption-btn" class="btn">Draft caption</button>
+            <a id="lb-download" class="btn" download>Download</a>
+            <button id="lb-delete" class="btn danger">Delete</button>
+            <button id="lb-animate" class="btn"><span>Animate this still</span></button>
+          </div>
+          <div id="animate-box" hidden>
+            <div class="head">
+              <span class="cap">animate</span>
+              <span class="meta">still &rarr; .webm clip</span>
+            </div>
+            <div class="body">
+              <label class="f"><span class="cap">motion description</span>
+                <textarea id="an-prompt" rows="2" placeholder="slow push in, cursed energy drifting upward, hair moving in the wind"></textarea></label>
+              <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:9px">
+                <label class="f"><span class="cap">seconds</span>
+                  <input id="an-seconds" class="mono-in" type="number" step="0.5" min="1" max="5" value="3"></label>
+                <label class="f"><span class="cap">canvas</span>
+                  <select id="an-size" class="mono-in">
+                    <option value="story">1080 &times; 1920 (9:16)</option>
+                    <option value="portrait">704 &times; 896 (4:5)</option>
+                    <option value="square">960 &times; 960 (1:1)</option>
+                  </select></label>
+              </div>
+              <button id="an-go" class="btn go wide">Queue clip</button>
+              <div class="foot"><i></i><span data-animate-hint></span></div>
+            </div>
+          </div>
         </div>
-        <button id="an-go" class="primary small">Queue clip</button>
-      </div>
-      <div class="lb-actions">
-        <button id="lb-fav" class="ghost">☆ Favourite</button>
-        <button id="lb-caption-btn" class="ghost">Draft caption</button>
-        <button id="lb-animate" class="ghost">Animate</button>
-        <a id="lb-download" class="btn ghost" download>Download</a>
-        <button id="lb-delete" class="ghost danger">Delete</button>
-        <button id="lb-close" class="ghost">Close</button>
-      </div>
-    </aside>
+      </aside>
+    </div>
   </div>
 </div>
 

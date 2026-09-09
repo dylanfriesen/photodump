@@ -84,6 +84,28 @@ def compile_prompt(subject_a: str, subject_b: str, mode: str, extra: str = "") -
     return ", ".join(p for p in parts if p)
 
 
+def compile_parts(subject_a: str, subject_b: str, mode: str, extra: str = "") -> list[dict]:
+    """The prompt split into the groups it was actually built from.
+
+    Only claims groupings the compiler genuinely knows: the fixed quality
+    preamble, the mode template, and the user's own extra direction. It does
+    not guess at subject-vs-style inside the template.
+    """
+    spec = MODES.get(mode) or MODES["design_fusion"]
+    body = spec["template"].format(a=subject_a.strip(), b=subject_b.strip())
+
+    def split(text):
+        return [t.strip() for t in text.split(",") if t.strip()]
+
+    groups = [
+        {"name": "quality", "tags": split(QUALITY)},
+        {"name": spec["label"].lower(), "tags": split(body)},
+    ]
+    if extra.strip():
+        groups.append({"name": "extras", "tags": split(extra)})
+    return groups
+
+
 def compile_negative(extra: str = "") -> str:
     if extra.strip():
         return f"{DEFAULT_NEGATIVE}, {extra.strip()}"

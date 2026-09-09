@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from . import captions, comfy, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows
-from .prompts import MODES, STARTERS, compile_negative, compile_prompt
+from .prompts import (MODES, STARTERS, compile_negative, compile_parts,
+                      compile_prompt)
 
 WEB = Path(__file__).parent.parent / "web"
 ALLOWED = {".png", ".jpg", ".jpeg", ".webp"}
@@ -102,14 +103,16 @@ async def api_del_ref(ref_id: int):
 @app.post("/api/preview")
 async def api_preview(payload: dict):
     """Compile without queueing, so the tag string is inspectable before spending a render."""
+    a = payload.get("subject_a", "")
+    b = payload.get("subject_b", "")
+    mode = payload.get("mode", "design_fusion")
+    extra = payload.get("extra", "")
+    prompt = compile_prompt(a, b, mode, extra)
     return {
-        "prompt": compile_prompt(
-            payload.get("subject_a", ""),
-            payload.get("subject_b", ""),
-            payload.get("mode", "design_fusion"),
-            payload.get("extra", ""),
-        ),
+        "prompt": prompt,
         "negative": compile_negative(payload.get("negative", "")),
+        "groups": compile_parts(a, b, mode, extra),
+        "tokens": len([t for t in prompt.split(",") if t.strip()]),
     }
 
 

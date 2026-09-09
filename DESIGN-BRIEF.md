@@ -1,5 +1,10 @@
 # photodump — design brief
 
+> **Status: the desktop artboard is implemented.** `PhotodumpDesktop.dc.html`
+> (Claude Design project `3c802983`) was ported into `web/` on 2026-09-09.
+> `PhotodumpMobile.dc.html` in that project has **not** been ported — the
+> current mobile layout is the desktop CSS reflowing at a 900px breakpoint.
+
 For a visual pass on the front end. The app is **built, wired and working**;
 this describes what the design layer may change freely and what it must not.
 
