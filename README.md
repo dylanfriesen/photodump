@@ -138,6 +138,16 @@ with `NotImplementedError` on an operator the docs claim is supported.
 Expect minutes per clip, not seconds. Also note ComfyUI issue #12672: WAN 2.2
 i2v runs 4-5x slower on its *second* run under ROCm.
 
+**LTX-2.5 is the upgrade path**, not the starting point. It produces 6-20s clips
+with synchronised audio in one pass, which suits reels far better than WAN's
+~3-5s silent clips, and its 16GB route is GGUF so it dodges the fp8 problem
+entirely. But it needs community quants for both transformer and text encoder
+(the official files total 34GB+), fits only with the encoder evicted before
+sampling and tiled VAE decode, and wants the `ComfyUI-GGUF` node pack. Get WAN
+5B working first so "does video work" is separated from "does the quant fit".
+Adding it needs a sibling to `comfy._build_video()`, written against an exported
+official template rather than speculatively.
+
 Frame count is forced to 4n+1 — WAN silently degrades the final chunk otherwise.
 
 ## Reels

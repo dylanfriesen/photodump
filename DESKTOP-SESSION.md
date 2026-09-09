@@ -115,7 +115,23 @@ the extra installs in §7.
 
 ### 3.6 Reconcile the graphs
 
-This is the real work. Get the node's own capability map:
+This is the real work.
+
+> **Do this first — it is far faster than debugging my graphs.**
+> ComfyUI ships official workflow templates for WAN 2.2 and LTX-2.5. Open the
+> matching template in the ComfyUI UI, then **Workflow → Export (API Format)**.
+> That gives you a graph whose node classes and socket indices are correct *for
+> the version you actually installed*, straight from the vendor.
+>
+> Then reshape it to kanto's expectations rather than the other way round:
+> keep the **node ids** listed in §4 (`comfy.py` indexes by string id), and keep
+> the same loaders/inputs the builder writes into. Diff the exported template
+> against §4 and you have your answer in minutes.
+>
+> The graphs in the repo were written from documentation. The exported template
+> is ground truth. Prefer it.
+
+Get the node's own capability map:
 
 ```powershell
 curl http://127.0.0.1:8188/object_info > object_info.json
@@ -250,7 +266,47 @@ WAN_VAE=wan2.2_vae.safetensors
 Until then the UI greys that option out and preflight says
 `missing nodes: IPAdapterUnifiedLoader`. That is correct behaviour, not a bug.
 
-**Video (WAN 2.2 TI2V-5B)**, ~15–20GB:
+### Video — WAN 2.2 vs LTX-2.5
+
+Two viable models. **Get a still rendering before attempting either.**
+
+| | WAN 2.2 TI2V-5B | LTX-2.5 |
+|---|---|---|
+| Fits 16GB | yes, natively at fp16 | only via GGUF, tightly |
+| Clip length | ~3–5s | **6–20s** |
+| Audio | none | **synchronised, same pass** |
+| Extra nodes | none | `ComfyUI-GGUF` |
+| Risk | low | moderate |
+
+**Start with WAN 5B.** It fits without quantisation, so it isolates "does video
+work at all" from "does an aggressive quant fit". Once a clip comes out, LTX-2.5
+is the upgrade worth making — longer clips and generated audio are both directly
+useful for Instagram reels.
+
+**LTX-2.5 on 16GB** needs community GGUF quants for *both* halves; the official
+files total 34GB+. The known-working pairing is:
+
+| file | approx |
+|---|---|
+| `LTX25-distilled-DiT-Q3_K_M.gguf` (transformer) | 10.6 GB |
+| Gemma-4 text encoder, Q5_K_M GGUF | 9.5 GB |
+| `ltx-2.5-video-vae-bf16.safetensors` | — |
+| `ltx-2.5-audio-vae-bf16.safetensors` | — |
+
+It fits only because ComfyUI frees the text encoder before sampling, and with
+**tiled VAE decode** enabled. Q3_K_M is a hard quant — judge the output before
+committing to it. Loaders are `UnetLoaderGGUF` and `CLIPLoaderGGUF` with
+`type: ltxv`.
+
+Note the GGUF route sidesteps §5 entirely, since nothing is fp8.
+
+**Adding LTX to the app** is not just a new JSON: `app/comfy.py` has a
+`_build_video()` that is specific to WAN's node layout. A second video model
+needs a sibling builder plus `LTX_*` filename settings alongside the `WAN_*`
+ones. Export the official template first, then write the builder to match it —
+do not write the builder speculatively.
+
+**WAN 2.2 TI2V-5B files**, ~15–20GB:
 
 | file | goes in |
 |---|---|
