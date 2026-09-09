@@ -55,7 +55,7 @@ tailscale serve --bg --https=8452 http://127.0.0.1:8096
 Loopback `:8096`, live at **https://kanto.tail4f3755.ts.net:8452**.
 No public vhost — there is no auth.
 
-## The two tasks
+## The tasks
 
 **Fuse** — blends two sources into one design. Four modes:
 
