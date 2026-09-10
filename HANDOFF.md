@@ -44,16 +44,16 @@ Three consequences that are *not* negotiable:
 **Proven** — `./tools/smoke.sh`, 16 assertions, currently 16/16. Runs with no GPU
 and no desktop, against a mock ComfyUI in `tools/mock_comfy.py`.
 
-**NOT proven — read this twice:**
+**Superseded — see `COMPLETION-NOTES.md` and `AT-THE-DESKTOP.md`.**
 
-> **No part of this has ever talked to a real ComfyUI.** The desktop was offline
-> for the entire build. No model has ever loaded, no image has ever actually been
-> generated. The graphs in `app/workflows/*.json` were written from documentation,
-> **not** captured from a running instance.
-
-That makes the workflow JSONs the highest-risk surface in the repo. Node class
-names and socket indices are plausible but unverified. `wan_i2v.json` is the
-least certain of the five — WAN's node naming has churned across releases.
+> This section used to say nothing had ever touched a real ComfyUI. That was
+> true when written on 2026-09-09 and is **no longer true**. Renders have since
+> completed on the desktop RX 9070 against a real ComfyUI, and a later session
+> wrote progress handling for LTX-2.5 node classes by observing live renders.
+>
+> What remains unproven is narrower: photodump can *track* an LTX render but
+> cannot *start* one, because no LTX graph has been exported from the desktop
+> yet. See `AT-THE-DESKTOP.md`.
 
 **The first real task is almost certainly: stand up ComfyUI on the desktop and
 correct the graphs against `/object_info`.** Expect to fix things. That is

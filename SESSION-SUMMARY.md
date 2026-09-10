@@ -1,5 +1,10 @@
 # photodump — session summary, 2026-09-09
 
+> **Stale in one important respect.** Written before the desktop node worked.
+> Renders have since completed on the real GPU, and the Create task described
+> as missing has been built. Read `COMPLETION-NOTES.md` and `AT-THE-DESKTOP.md`
+> for current status; keep this only for the reasoning behind the design.
+
 Written for you to review after a day away. Everything below is committed;
 the app is running and clean.
 
@@ -64,12 +69,7 @@ an exported workflow rather than new code.
 including from uploads, the Instagram re-encode, requeue end to end, preflight
 against four broken node configurations.
 
-**Not verified — and this is the whole risk:**
-
-> **No part of this has ever talked to a real ComfyUI.** Your desktop was
-> offline for every minute of this work. No model has loaded; no real image has
-> been generated. The five workflow graphs were written from documentation.
-> Expect them to be wrong in places.
+**Not verified, as of 2026-09-09 — since superseded, see the note at the top:**
 
 `wan_i2v.json` is the least certain of the five.
 
