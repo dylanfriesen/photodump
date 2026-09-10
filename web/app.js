@@ -19,6 +19,7 @@ let CURRENT = null;   // item open in the lightbox
 let SELECTED = [];    // ordered shot keys ('image:5' / 'ref:3')
 let REEL_MODE = false;
 let CR_REFS = [];      // ordered reference ids for the Create task
+const NODE_CAPS = { has_ipadapter: true };   // until /api/node says otherwise
 let IMAGES = [];      // normalised tiles currently in the grid
 let REFS = [];        // uploaded references, for the 'my photos' source
 let NODE = { online: false, current: null, queued: 0 };
@@ -89,13 +90,18 @@ function initSeg(el) {
    prompt to a tab reload is the kind of small loss that stops you using a
    tool from your phone at all. */
 const REMEMBER = ['subject-a', 'subject-b', 'mode', 'extra', 'negative',
-                  'ex-prompt', 're-bpm', 're-beats', 're-seconds'];
+                  'ex-prompt', 're-bpm', 're-beats', 're-seconds',
+                  'cr-prompt', 'cr-negative', 'cr-quality', 'cr-mode'];
+const isCheck = (el) => el && el.type === 'checkbox';
 const STORE_KEY = 'photodump.form.v1';
 
 function saveForm() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(
-      Object.fromEntries(REMEMBER.map((id) => [id, $(id).value]))));
+      Object.fromEntries(REMEMBER.map((id) => {
+        const el = $(id);
+        return [id, isCheck(el) ? el.checked : el.value];
+      }))));
   } catch { /* private mode, quota - not worth surfacing */ }
 }
 
@@ -104,7 +110,10 @@ function restoreForm() {
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch { return; }
   if (!saved || typeof saved !== 'object') return;
   for (const id of REMEMBER) {
-    if (typeof saved[id] === 'string') $(id).value = saved[id];
+    const el = $(id), v = saved[id];
+    if (!el) continue;
+    if (isCheck(el)) { if (typeof v === 'boolean') el.checked = v; }
+    else if (typeof v === 'string') el.value = v;
   }
 }
 
@@ -131,8 +140,12 @@ async function boot() {
   $('node-bars').innerHTML = [0, 1, 2, 3, 4].map((i) => `<i style="height:${6 + i * 2}px"></i>`).join('');
 
   restoreForm();
-  REMEMBER.forEach((id) => $(id).addEventListener('input', saveForm));
-  $('mode').addEventListener('change', saveForm);
+  // Selects and checkboxes fire change, not input - listening to only one
+  // meant those fields were never persisted.
+  REMEMBER.forEach((id) => {
+    $(id).addEventListener('input', saveForm);
+    $(id).addEventListener('change', saveForm);
+  });
 
   switchScreen('studio');
   syncHint(); syncCounts(); syncFeather(); syncSelection();
@@ -313,10 +326,16 @@ async function probeNode() {
     $('checkpoint').innerHTML = '<option value="">default</option>' +
       body.checkpoints.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   }
-  if (!body.has_ipadapter) {
+  NODE_CAPS.has_ipadapter = body.has_ipadapter !== false;
+  if (!NODE_CAPS.has_ipadapter) {
+    const note = ' — node pack not installed';
     const opt = $('workflow').querySelector('[value="ipadapter"]');
-    if (opt) { opt.disabled = true; opt.textContent += ' — node pack not installed'; }
+    if (opt) { opt.disabled = true; opt.textContent += note; }
+    // Create can reach the same workflow, so it needs the same guard.
+    const cr = $('cr-mode').querySelector('[value="ipadapter_multi"]');
+    if (cr) { cr.disabled = true; cr.textContent += note; }
   }
+  syncCreate();
 }
 
 /* ---------- form ---------- */
@@ -367,7 +386,9 @@ document.addEventListener('click', (e) => {
   const input = step.parentElement.querySelector('input');
   const next = Math.max(+input.min || 1, Math.min(+input.max || 99, (+input.value || 0) + (+step.dataset.step)));
   input.value = next;
-  syncCounts();
+  // Fire input so every listener sees it - syncCounts alone missed Create's
+  // badge, and any future stepper would have inherited the same bug.
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 });
 ['count', 'ex-count', 'ref', 'workflow', 'checkpoint', 'denoise', 'ip-weight', 'steps', 'cfg']
   .forEach((id) => { $(id).addEventListener('input', syncCounts); $(id).addEventListener('change', syncCounts); });
@@ -466,11 +487,18 @@ async function refreshRefs() {
   if (!ok || !Array.isArray(body)) return;
   const imgs = body.filter((r) => r.kind !== 'audio');
   REFS = imgs;
+  // Rebuilding these selects wipes whatever the other tasks had chosen, so
+  // remember and restore. Picking a Create reference used to silently retarget
+  // Extend at a different photograph.
+  const keep = { ref: $('ref').value, 'ex-ref': $('ex-ref').value, 're-audio': $('re-audio').value };
   const opts = imgs.map((r) => `<option value="${r.id}">${esc(r.label)} (${esc(r.kind)})</option>`).join('');
   $('ref').innerHTML = '<option value="">none</option>' + opts;
   $('ex-ref').innerHTML = opts || '<option value="">upload one under References</option>';
   $('re-audio').innerHTML = '<option value="">no music</option>' +
     body.filter((r) => r.kind === 'audio').map((r) => `<option value="${r.id}">${esc(r.label)}</option>`).join('');
+  for (const [id, was] of Object.entries(keep)) {
+    if (was && $(id).querySelector(`option[value="${was}"]`)) $(id).value = was;
+  }
 
   renderRefPicker(imgs);
   $('refs-meta').textContent = `${body.length} reference${body.length === 1 ? '' : 's'}`;
@@ -527,12 +555,50 @@ function renderRefPicker(imgs) {
   syncCreate();
 }
 
+/* Which workflow this will actually resolve to. Mirrors comfy.build() - the
+   control on screen has to match it, or the user is tuning a value the graph
+   never reads. */
+function resolvedCreateMode() {
+  const n = CR_REFS.length;
+  if (!n) return 'txt2img';
+  const chosen = $('cr-mode').value;
+  if (chosen) return chosen === 'ipadapter' && n > 1 ? 'ipadapter_multi' : chosen;
+  return n > 1 ? 'ipadapter_multi' : 'img2img';
+}
+
 function syncCreate() {
   const n = CR_REFS.length;
+  const mode = resolvedCreateMode();
+  const styleMode = mode.startsWith('ipadapter');
+
   $('cr-ref-count').textContent = n ? `${n} selected` : '';
-  // Reference strength only means anything once something is attached.
   $('cr-ip-row').hidden = n === 0;
+  // img2img strength is denoise; IP-Adapter strength is ip_weight. Showing the
+  // wrong one made the control a no-op.
+  $('cr-ipweight-wrap').hidden = !styleMode;
+  $('cr-denoise-wrap').hidden = styleMode;
   $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
+
+  // img2img conditions on one latent, so extra references would be dropped.
+  const single = $('cr-mode').querySelector('[value="img2img"]');
+  if (single) {
+    single.disabled = n > 1;
+    single.textContent = n > 1
+      ? 'keep composition — one reference only'
+      : 'keep composition (single ref)';
+  }
+  if (n > 1 && $('cr-mode').value === 'img2img') $('cr-mode').value = '';
+
+  const warn = [];
+  if (styleMode && !NODE_CAPS.has_ipadapter) {
+    warn.push('The node has no IP-Adapter pack installed — this would fail.');
+  }
+  const hint = $('cr-ref-hint');
+  hint.textContent = warn.length ? warn.join(' ')
+    : n > 1 ? `${n} references blended as one style reference.`
+    : 'Click to add, in order. Several can be combined — they are blended as one style reference.';
+  hint.style.color = warn.length ? 'var(--amber)' : '';
+  $('btn-create').disabled = warn.length > 0;
 }
 
 $('cr-refs').onclick = (e) => {
@@ -541,8 +607,25 @@ $('cr-refs').onclick = (e) => {
   const id = +fig.dataset.pick;
   const at = CR_REFS.indexOf(id);
   if (at >= 0) CR_REFS.splice(at, 1); else CR_REFS.push(id);
-  refreshRefs();
+  paintPicks();            // update in place; do not rebuild the DOM
 };
+
+/* Toggle selection state on the existing tiles. Rebuilding innerHTML on every
+   click detached the node mid-interaction and threw away focus and scroll. */
+function paintPicks() {
+  $('cr-refs').querySelectorAll('[data-pick]').forEach((fig) => {
+    const at = CR_REFS.indexOf(+fig.dataset.pick);
+    fig.classList.toggle('on', at >= 0);
+    let n = fig.querySelector('.n');
+    if (at >= 0) {
+      if (!n) { n = document.createElement('span'); n.className = 'n'; fig.prepend(n); }
+      n.textContent = at + 1;
+    } else if (n) {
+      n.remove();
+    }
+  });
+  syncCreate();
+}
 
 function createValues() {
   const body = {
@@ -556,9 +639,11 @@ function createValues() {
     checkpoint: $('checkpoint').value || null,
   };
   if (CR_REFS.length) {
+    const mode = resolvedCreateMode();
     body.ref_ids = CR_REFS;
-    body.ip_weight = +$('cr-ipweight').value;
-    if ($('cr-mode').value) body.workflow = $('cr-mode').value;
+    body.workflow = mode;               // send what we resolved, not what was typed
+    if (mode.startsWith('ipadapter')) body.ip_weight = +$('cr-ipweight').value;
+    else body.denoise = +$('cr-denoise').value;
   }
   return body;
 }
@@ -570,7 +655,10 @@ $('btn-cr-preview').onclick = () => {
   const el = $('cr-preview');
   el.hidden = false;
   el.textContent = `+ ${pos}\n\n- ${v.negative || '(defaults)'}` +
-    (CR_REFS.length ? `\n\n${CR_REFS.length} reference(s) at weight ${v.ip_weight}` : '');
+    (CR_REFS.length
+      ? `\n\n${CR_REFS.length} reference(s) via ${v.workflow} at ` +
+        (v.ip_weight !== undefined ? `weight ${v.ip_weight}` : `denoise ${v.denoise}`)
+      : '');
 };
 
 $('btn-create').onclick = async (e) => {
@@ -590,7 +678,8 @@ $('btn-create').onclick = async (e) => {
   pollStatus.last = undefined;
 };
 
-['cr-count', 'cr-ipweight'].forEach((id) => { $(id).oninput = syncCreate; });
+['cr-count', 'cr-ipweight', 'cr-denoise'].forEach((id) => { $(id).oninput = syncCreate; });
+$('cr-mode').onchange = syncCreate;
 
 /* ---------- gallery ---------- */
 function tileMarkup(i) {

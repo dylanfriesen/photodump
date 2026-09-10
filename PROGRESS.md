@@ -14,6 +14,47 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-10
 
+**Fixed six issues Codex's review found in Create, and deployed it**
+All six were real; I verified each before changing anything rather than
+fixing on report alone.
+
+1. *Reference strength was a no-op with one reference.* Auto resolves a single
+   reference to img2img, whose strength is `denoise` — but the control always
+   sent `ip_weight`, which that graph never reads. The UI now resolves the
+   workflow client-side (`resolvedCreateMode()`, mirroring `comfy.build`) and
+   shows the control that actually applies.
+2. *Picking a Create reference retargeted the other tasks.* `refreshRefs()`
+   rebuilds the Fuse/Extend/Reel selects, discarding their values, so choosing
+   a Create reference could silently point Extend at a different photograph.
+   Selections are now preserved across a rebuild, and picking repaints only the
+   Create picker.
+3. *Create drafts were lost on reload* — the fields were missing from `REMEMBER`,
+   which also only handled strings and only listened for `input`. Checkboxes and
+   selects now persist too.
+4. *Create bypassed the capability check.* Only Fuse's IP-Adapter option was
+   disabled when the node lacks the pack; Create could still submit that
+   workflow. `NODE_CAPS` now gates both, with a warning and a blocked Generate.
+5. *"Keep composition" silently dropped extra references* — img2img loads only
+   the first. That option is now disabled above one reference.
+6. *The count badge disagreed with the payload* — the shared stepper set
+   `input.value` without dispatching `input`, so Create's badge never updated.
+   The stepper now fires the event, which fixes it for any future stepper too.
+
+Also replaced the picker's innerHTML rebuild with in-place updates. Rebuilding
+on every click detached the tile mid-interaction and discarded focus and scroll.
+
+**Cost:** my own test was wrong twice — it clicked stale DOM nodes after a
+rebuild, and used `await` inside `Runtime.evaluate`, which silently returns
+undefined. Both produced false failures I chased before checking the harness.
+
+**Deployed to the live instance** (`up -d --build`); 6 jobs and 3 refs intact.
+24 smoke assertions and 12 unit tests pass.
+
+**Still open:** ComfyUI unreachable, jobs waiting, LTX submission unimplemented
+pending the API-format export. No GPU validation of any of this.
+
+## 2026-09-10
+
 **`3942f72` Create task — prompt directly, with any number of references**
 The app only offered Fuse/Extend/Reel, so the two-subject blend was the *only*
 route to an image. Create is now first and default. Multiple references are
@@ -76,3 +117,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 
 ## Log
 - `eff568c` 2026-09-10 12:13 (dylan) — Add PROGRESS.md and a post-commit hook that maintains it
+- `4b4a015` 2026-09-10 12:14 (dylan) — Add a working agreement both agents read

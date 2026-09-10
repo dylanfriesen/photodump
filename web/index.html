@@ -85,12 +85,14 @@
             <span class="meta" id="cr-ref-count"></span>
           </div>
           <div id="cr-refs" class="refpick"></div>
-          <span class="hint">Click to add, in order. Several can be combined &mdash; they are blended as one style reference.</span>
+          <span class="hint" id="cr-ref-hint">Click to add, in order. Several can be combined &mdash; they are blended as one style reference.</span>
         </div>
 
         <div class="f2" id="cr-ip-row" hidden>
-          <label class="f"><span class="cap">reference strength</span>
+          <label class="f" id="cr-ipweight-wrap"><span class="cap">reference strength</span>
             <input id="cr-ipweight" class="mono-in" type="number" step="0.05" min="0.1" max="1.5" value="0.7"></label>
+          <label class="f" id="cr-denoise-wrap" hidden><span class="cap">how much to change</span>
+            <input id="cr-denoise" class="mono-in" type="number" step="0.05" min="0.1" max="1" value="0.65"></label>
           <label class="f"><span class="cap">how to use</span>
             <select id="cr-mode">
               <option value="">auto</option>
