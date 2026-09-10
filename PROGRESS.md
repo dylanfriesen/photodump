@@ -75,3 +75,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 ---
 
 ## Log
+- `eff568c` 2026-09-10 12:13 (dylan) — Add PROGRESS.md and a post-commit hook that maintains it
