@@ -21,6 +21,7 @@ WORKFLOWS = [
     ("txt2img",   "Fuse",            {}),
     ("img2img",   "Fuse w/ reference", {"workflow": "img2img"}),
     ("ipadapter", "IP-Adapter",      {"workflow": "ipadapter"}),
+    ("ipadapter_multi", "Multi-reference", {"workflow": "ipadapter_multi"}),
     ("outpaint",  "Extend",          {"workflow": "outpaint"}),
     ("wan_i2v",   "Animate",         {"workflow": "wan_i2v"}),
 ]
@@ -39,8 +40,11 @@ async def run() -> dict:
 
     results = []
     for name, label, params in WORKFLOWS:
-        # A dummy reference keeps ref-consuming graphs on their real path.
-        graph, _ = comfy.build("preflight", "", dict(params), ref_name="preflight.png")
+        # Dummy references keep ref-consuming graphs on their real path. The
+        # multi-reference graph only grows its ImageBatch chain when given more
+        # than one, so hand it two - otherwise those nodes go unvalidated.
+        refs = ["preflight.png", "preflight2.png"] if name == "ipadapter_multi" else ["preflight.png"]
+        graph, _ = comfy.build("preflight", "", dict(params), refs)
         classes = {n["class_type"] for n in graph.values()}
         missing_nodes = sorted(c for c in classes if c not in info)
 

@@ -111,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
                 "KSampler": {}, "LoadImage": {}, "ImagePadForOutpaint": {},
                 "VAEEncodeForInpaint": {}, "VAEEncode": {}, "VAEDecode": {},
                 "CLIPTextEncode": {}, "EmptyLatentImage": {}, "SaveImage": {},
-                "IPAdapterAdvanced": {},
+                "IPAdapterAdvanced": {}, "ImageBatch": {},
                 "UNETLoader": {"input": {"required": {"unet_name": [["wan2.2_ti2v_5B_fp16.safetensors"]]}}},
                 "CLIPLoader": {"input": {"required": {"clip_name": [["umt5_xxl_fp16.safetensors"]]}}},
                 "VAELoader": {"input": {"required": {"vae_name": [["wan2.2_vae.safetensors"]]}}},
@@ -261,6 +261,10 @@ class Handler(BaseHTTPRequestHandler):
         if "14" in graph:  # ImagePadForOutpaint
             i = graph["14"]["inputs"]
             print(f"  [mock]   PAD l={i['left']} r={i['right']} t={i['top']} b={i['bottom']}", flush=True)
+        loads = sum(1 for n in graph.values() if n["class_type"] == "LoadImage")
+        batches = sum(1 for n in graph.values() if n["class_type"] == "ImageBatch")
+        if batches:
+            print(f"  [mock]   REFS {loads} images batched via {batches} ImageBatch node(s)", flush=True)
         if "23" in graph:  # Wan22ImageToVideoLatent
             i = graph["23"]["inputs"]
             print(f"  [mock]   VIDEO {i['width']}x{i['height']} frames={i['length']} "

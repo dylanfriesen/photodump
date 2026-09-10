@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from . import captions, comfy, deliver, preflight, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows
-from .prompts import (MODES, STARTERS, compile_negative, compile_parts,
+from .prompts import (MODES, QUALITY, STARTERS, compile_negative, compile_parts,
                       compile_prompt)
 
 WEB = Path(__file__).parent.parent / "web"
@@ -128,7 +128,12 @@ async def api_preview(payload: dict):
 @app.post("/api/generate")
 async def api_generate(payload: dict):
     count = max(1, min(int(payload.get("count", 1)), 8))
-    prompt = payload.get("prompt") or compile_prompt(
+    # A free-form prompt wins outright. Only the Fuse task compiles one from
+    # subject_a/subject_b - everything else says what it wants directly.
+    free = (payload.get("prompt") or "").strip()
+    if free and payload.get("quality", True) and not QUALITY.split(",")[0] in free:
+        free = f"{QUALITY}, {free}"
+    prompt = free or compile_prompt(
         payload.get("subject_a", ""),
         payload.get("subject_b", ""),
         payload.get("mode", "design_fusion"),
@@ -144,6 +149,7 @@ async def api_generate(payload: dict):
         "ip_weight": float(payload.get("ip_weight", 0.7)),
         "workflow": payload.get("workflow"),
         "checkpoint": payload.get("checkpoint"),
+        "free_prompt": bool(free),
         "feathering": int(payload.get("feathering", 40)),
         "extend_target": payload.get("extend_target", "portrait"),
         "extend_anchor": payload.get("extend_anchor", "center"),
@@ -160,14 +166,19 @@ async def api_generate(payload: dict):
         },
     }
     ref_id = payload.get("ref_id") or None
+    # Several references may be attached, in the order the user picked them.
+    ref_ids = [int(r) for r in (payload.get("ref_ids") or []) if r]
+    if not ref_ids and ref_id:
+        ref_ids = [int(ref_id)]
 
     ids = []
     with db() as conn:
         for _ in range(count):
             cur = conn.execute(
-                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, src_image_id) "
-                "VALUES (?,?,?,?,?,?)",
-                (payload.get("recipe_id"), prompt, negative, json.dumps(params), ref_id,
+                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, ref_ids, src_image_id) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (payload.get("recipe_id"), prompt, negative, json.dumps(params),
+                 ref_ids[0] if ref_ids else None, json.dumps(ref_ids),
                  payload.get("src_image_id")),
             )
             ids.append(cur.lastrowid)

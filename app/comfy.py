@@ -98,10 +98,44 @@ async def upload_image(path: Path) -> str:
     return f"{sub}/{name}" if sub else name
 
 
-def build(prompt: str, negative: str, params: dict, ref_name: str | None = None) -> tuple[dict, int]:
+def _chain_references(wf: dict, ref_names: list[str]) -> None:
+    """Feed several references into one IPAdapter by batching them.
+
+    The graph size depends on how many references there are, so the extra
+    LoadImage and ImageBatch nodes are generated rather than templated. Only
+    core nodes are used for the batching itself; the IPAdapter pack supplies
+    the conditioning. Per-reference weights would need IPAdapterEncoder +
+    CombineEmbeds, which is a bigger change - these share one weight.
+    """
+    wf["10"]["inputs"]["image"] = ref_names[0]
+    prev = "10"
+    for i, name in enumerate(ref_names[1:], start=1):
+        load, batch = f"10{i}", f"20{i}"
+        wf[load] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        wf[batch] = {"class_type": "ImageBatch",
+                     "inputs": {"image1": [prev, 0], "image2": [load, 0]}}
+        prev = batch
+    wf["13"]["inputs"]["image"] = [prev, 0]
+
+
+def build(prompt: str, negative: str, params: dict,
+          ref_names: "str | list[str] | None" = None) -> tuple[dict, int]:
     """Fill a workflow template. Returns (graph, seed) so the seed can be recorded."""
-    mode = params.get("workflow") or ("img2img" if ref_name else "txt2img")
-    if mode in ("img2img", "ipadapter", "outpaint", "wan_i2v") and not ref_name:
+    if isinstance(ref_names, str):
+        ref_names = [ref_names]
+    ref_names = [r for r in (ref_names or []) if r]
+    ref_name = ref_names[0] if ref_names else None
+
+    mode = params.get("workflow")
+    if not mode:
+        # More than one reference cannot go through img2img, which conditions
+        # on a single latent; style conditioning is the only thing that takes
+        # several images at once.
+        mode = ("ipadapter_multi" if len(ref_names) > 1
+                else "img2img" if ref_name else "txt2img")
+    if mode == "ipadapter" and len(ref_names) > 1:
+        mode = "ipadapter_multi"
+    if mode in ("img2img", "ipadapter", "ipadapter_multi", "outpaint", "wan_i2v") and not ref_name:
         mode = "txt2img"
 
     if mode == "wan_i2v":
@@ -137,9 +171,12 @@ def build(prompt: str, negative: str, params: dict, ref_name: str | None = None)
         w, h = ASPECTS.get(params.get("aspect", "portrait"), ASPECTS["portrait"])
         wf["5"]["inputs"]["width"] = w
         wf["5"]["inputs"]["height"] = h
-        if mode == "ipadapter":
-            wf["10"]["inputs"]["image"] = ref_name
+        if mode in ("ipadapter", "ipadapter_multi"):
             wf["13"]["inputs"]["weight"] = float(params.get("ip_weight", 0.7))
+            if mode == "ipadapter_multi":
+                _chain_references(wf, ref_names)
+            else:
+                wf["10"]["inputs"]["image"] = ref_name
 
     wf["3"]["inputs"] = k
     return wf, seed

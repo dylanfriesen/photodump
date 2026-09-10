@@ -194,10 +194,22 @@ async def _run(job: dict):
             raise comfy.ComfyError("source image no longer exists")
         ref_name = await comfy.upload_image(OUT / img["filename"])
 
-    elif job["ref_id"]:
+    elif job["ref_id"] or job["ref_ids"]:
+        # A job may carry several references, in the order they were picked.
+        # ref_id is the older single-reference column, still honoured.
+        ids = loads(job["ref_ids"], []) or []
+        if not ids and job["ref_id"]:
+            ids = [job["ref_id"]]
         with db() as conn:
-            ref = conn.execute("SELECT * FROM refs WHERE id=?", (job["ref_id"],)).fetchone()
-        if ref:
+            found = {r["id"]: r for r in conn.execute(
+                f"SELECT * FROM refs WHERE id IN ({','.join('?' * len(ids))})", ids)}
+        refs = [found[i] for i in ids if i in found and found[i]["kind"] != "audio"]
+
+        if len(refs) > 1:
+            # Style conditioning takes them all; upload in the picked order.
+            ref_name = [await comfy.upload_image(REFS / r["filename"]) for r in refs]
+        elif refs:
+            ref = refs[0]
             src = REFS / ref["filename"]
             if params.get("workflow") == "outpaint":
                 # Pads depend on the real pixel dimensions, so they are computed
