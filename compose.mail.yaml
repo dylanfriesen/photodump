@@ -1,0 +1,17 @@
+services:
+  mailer:
+    build: .
+    image: photodump-mailer
+    container_name: photodump-mailer
+    restart: unless-stopped
+    command: ["python", "-m", "app.mailer"]
+    volumes:
+      # SQLite needs to create its WAL/SHM sidecars even for mode=ro readers.
+      # mailer.py opens the application database with mode=ro.
+      - ./data:/srv/data
+      - ./data/mail:/srv/mailstate
+    environment:
+      DATA_DIR: /srv/data
+      MAIL_STATE_DIR: /srv/mailstate
+    networks:
+      - default

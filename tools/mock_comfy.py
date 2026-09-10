@@ -6,6 +6,8 @@ implements the endpoints app/comfy.py actually calls:
 
     GET  /system_stats      health probe
     GET  /object_info       checkpoint list + node availability
+    GET  /queue             what is running / pending, for re-attach
+    GET  /ws?clientId=      per-step progress, addressed to the submitter
     POST /prompt            accept a graph, return a prompt_id
     GET  /history/{id}      report progress, then outputs
     GET  /view              hand back the rendered bytes
@@ -24,8 +26,13 @@ Run it on the app's docker network so the container can reach it:
       -v "$PWD/tools:/m:ro" photodump-photodump python /m/mock_comfy.py
 """
 import argparse
+import base64
+import hashlib
 import io
 import json
+import queue
+import struct
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,8 +41,23 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image
 
 JOBS = {}
+SOCKETS = {}        # clientId -> Queue of messages to push down the websocket
 ARGS = None
 _WEBM = None
+
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def ws_frame(payload: bytes) -> bytes:
+    """A single unfragmented text frame. Server frames are never masked."""
+    n = len(payload)
+    if n < 126:
+        head = struct.pack("!BB", 0x81, n)
+    elif n < 65536:
+        head = struct.pack("!BBH", 0x81, 126, n)
+    else:
+        head = struct.pack("!BBQ", 0x81, 127, n)
+    return head + payload
 
 
 def _fake_webm():
@@ -58,6 +80,7 @@ def _fake_webm():
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"  # WebSocket upgrades require HTTP/1.1.
     def log_message(self, *a):
         pass
 
@@ -101,6 +124,16 @@ class Handler(BaseHTTPRequestHandler):
                     info.pop(n, None)
             return self._send(200, info)
 
+        if u.path == "/ws":
+            return self._websocket(parse_qs(u.query).get("clientId", [""])[0])
+
+        if u.path == "/queue":
+            now = time.time()
+            live = [[0, pid, j["graph"], {"client_id": j["client_id"]}] for pid, j in JOBS.items()
+                    if now - j["t"] < ARGS.latency]
+            return self._send(200, {"queue_running": live[:1],
+                                    "queue_pending": live[1:]})
+
         if u.path.startswith("/history/"):
             return self._history(u.path.rsplit("/", 1)[1])
 
@@ -125,6 +158,59 @@ class Handler(BaseHTTPRequestHandler):
             "status": {"status_str": "success"},
             "outputs": {node: {"images": [{"filename": name, "subfolder": "", "type": "output"}]}},
         }})
+
+    def _websocket(self, client_id):
+        """Minimal server-to-client websocket.
+
+        Real ComfyUI addresses progress to the client id that submitted the
+        prompt, so a test that does not model that would not exercise the
+        thing most likely to break. Only the server-to-client direction is
+        implemented - nothing here ever reads a frame.
+        """
+        key = self.headers.get("Sec-WebSocket-Key")
+        if not key or not client_id:
+            return self._send(400, {})
+        accept = base64.b64encode(
+            hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        self.wfile.flush()
+
+        q = queue.Queue()
+        SOCKETS[client_id] = q
+        self.close_connection = True   # this thread owns the socket from here
+        self.wfile.write(ws_frame(json.dumps(
+            {"type": "status", "data": {"status": {"exec_info": {"queue_remaining": 0}}}}).encode()))
+        try:
+            while True:
+                msg = q.get(timeout=ARGS.latency * 4 + 20)
+                if msg is None:
+                    return
+                self.wfile.write(ws_frame(json.dumps(msg).encode()))
+                self.wfile.flush()
+        except (queue.Empty, BrokenPipeError, OSError):
+            return
+        finally:
+            if SOCKETS.get(client_id) is q:
+                SOCKETS.pop(client_id, None)
+
+    def _emit_progress(self, client_id, graph, steps):
+        """Walk the sampler's steps over the render window, as ComfyUI does."""
+        def emit(packet):
+            q = SOCKETS.get(client_id)
+            if q is not None:
+                q.put(packet)
+        gap = max(0.02, ARGS.latency * 0.8 / max(1, steps))
+        emit({"type": "executing", "data": {"node": "3"}})
+        for i in range(1, steps + 1):
+            time.sleep(gap)
+            emit({"type": "progress", "data": {"value": i, "max": steps, "node": "3"}})
+        emit({"type": "executing", "data": {"node": "8"}})   # VAEDecode
+        time.sleep(ARGS.latency * 0.1)
+        emit({"type": "executing", "data": {"node": None}})
 
     def _view(self, q):
         fn = q.get("filename", [""])[0]
@@ -152,8 +238,14 @@ class Handler(BaseHTTPRequestHandler):
             graph = json.loads(body).get("prompt", {})
             assert "3" in graph and graph["3"]["class_type"] == "KSampler", "graph has no KSampler"
             pid = uuid.uuid4().hex
-            JOBS[pid] = {"t": time.time(), "graph": graph}
+            JOBS[pid] = {"t": time.time(), "graph": graph,
+                         "client_id": json.loads(body).get("client_id", "")}
             self._describe(pid, graph)
+            client_id = json.loads(body).get("client_id", "")
+            threading.Thread(
+                target=self._emit_progress,
+                args=(client_id, graph, int(graph["3"]["inputs"]["steps"])),
+                daemon=True).start()
             return self._send(200, {"prompt_id": pid})
 
         if u.path == "/upload/image":

@@ -67,6 +67,7 @@ for _ in $(seq 1 12); do
 done
 check "node reports online" "$(curl -s $B/api/status | field "d['online']")" "True"
 
+if [ "${1:-}" != "--progress-only" ]; then
 say "1. text-to-image"
 curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
   -d '{"subject_a":"gardevoir","subject_b":"gojo satoru","mode":"design_fusion","count":2}' >/dev/null
@@ -143,6 +144,56 @@ start_mock --latency 2
 say "7. IP-Adapter hidden when the node pack is absent"
 start_mock --no-ipadapter
 check "has_ipadapter reported false" "$(curl -s $B/api/node | field "d['has_ipadapter']")" "False"
+
+fi
+
+say "8. live progress reaches the UI mid-render"
+# A slow render so there is a window to observe. The mock streams the same
+# per-step websocket messages ComfyUI does, addressed to the client id that
+# submitted - which is the part most likely to break.
+start_mock --latency 20
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"subject_a":"eevee","subject_b":"toji","mode":"design_fusion","count":1,"steps":20}' >/dev/null
+SRC=""; PCT=0; STEPS=0
+for _ in $(seq 1 20); do
+  sleep 2
+  read -r SRC PCT STEPS <<<"$(curl -s $B/api/status | python3 -c "
+import json,sys
+p = json.load(sys.stdin).get('progress') or {}
+print(p.get('source','-'), p.get('percent') or 0, p.get('steps') or 0)")"
+  [ "$SRC" = "steps" ] && break
+done
+check "progress source is the node's own step count" "$SRC" "steps"
+check "step total matches the requested steps" "$STEPS" "20"
+python3 -c "import sys; sys.exit(0 if 0 < float('$PCT') <= 92 else 1)" \
+  && ok "percent is within the sampler band (${PCT}%)" \
+  || bad "percent out of range: $PCT"
+wait_for "jobs[0]['status']=='done'" 90 >/dev/null
+check "progress clears when the job finishes" \
+  "$(curl -s $B/api/status | field "d['progress']")" "None"
+
+say "9. a job interrupted by a restart is recovered, not orphaned"
+start_mock --latency 60
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"subject_a":"mimikyu","subject_b":"nanami","mode":"design_fusion","count":1}' >/dev/null
+wait_for "jobs[0]['status']=='running'" 45 \
+  && ok "job is running before the restart" || bad "job never started"
+PID_BEFORE=$(curl -s $B/api/jobs | field "d[0]['prompt_id']")
+docker restart ${CONTAINER_NAME} >/dev/null 2>&1
+sleep 8
+# Recovery requeues it; the mock still holds the prompt, so it re-attaches
+# rather than rendering the same job twice.
+check "restart keeps the original node prompt" \
+  "$(curl -s $B/api/jobs | field "d[0]['prompt_id']")" "$PID_BEFORE"
+wait_for "jobs[0]['status']=='done'" 120 \
+  && ok "recovered and completed after the restart" || bad "orphaned by the restart"
+check "one image per job, no duplicate render" \
+  "$(curl -s $B/api/jobs | python3 -c "
+import json,sys
+jid = json.load(sys.stdin)[0]['id']
+import urllib.request
+imgs = json.load(urllib.request.urlopen('$B/api/images'))
+print(sum(1 for i in imgs if i['job_id']==jid))")" "1"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

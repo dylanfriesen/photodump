@@ -4,14 +4,18 @@ Every call assumes the node may simply be asleep - that's the normal resting
 state of a desktop, not an error. Callers get ComfyOffline and are expected to
 leave the job queued rather than fail it.
 """
+import asyncio
+import contextlib
 import json
 import random
 from pathlib import Path
 
 import httpx
+import websockets
 
-from .config import (COMFY_URL, CHECKPOINT, ASPECTS, VIDEO_SIZES, VIDEO_BACKEND,
-                     WAN_UNET, WAN_CLIP, WAN_VAE, LTX_UNET, LTX_CLIP, LTX_VAE)
+from .config import (COMFY_HOST, COMFY_PORT, COMFY_URL, CHECKPOINT, ASPECTS,
+                     VIDEO_SIZES, VIDEO_BACKEND, WAN_UNET, WAN_CLIP, WAN_VAE,
+                     LTX_UNET, LTX_CLIP, LTX_VAE)
 
 WORKFLOWS = Path(__file__).parent / "workflows"
 
@@ -221,6 +225,135 @@ async def submit(graph: dict, client_id: str) -> str:
         # not the node's. Surface the node's own error text; it is specific.
         raise ComfyError(f"HTTP {r.status_code}: {r.text[:600]}")
     return r.json()["prompt_id"]
+
+
+# --- live progress --------------------------------------------------------
+# ComfyUI publishes per-step progress only over its websocket, and only to the
+# client id that submitted the prompt - a second socket listening with its own
+# id hears nothing but queue counts. So the socket has to be open *before*
+# submit(), with the same client id, or the opening steps are lost.
+#
+# This is telemetry, never control flow. If the socket will not open, or drops
+# halfway, the render still completes through history polling; the UI just
+# falls back to a time estimate.
+
+WS_URL = f"ws://{COMFY_HOST}:{COMFY_PORT}/ws"
+
+# Node class -> what to call that phase in the UI. Anything unlisted falls
+# back to the class name, which is still more use than a bare node id.
+NODE_STAGES = {
+    "UnetLoaderGGUF": "loading model",
+    "CLIPLoaderGGUF": "loading text encoder",
+    "SamplerCustomAdvanced": "sampling",
+    "LTXVLatentUpsampler": "upscaling latents",
+    "VAEDecodeTiled": "decoding video",
+    "LTXVSpatioTemporalTiledVAEDecode": "decoding video",
+    "LTXVAudioVAEDecode": "decoding audio",
+    "CreateVideo": "assembling video and audio",
+    "SaveVideo": "saving video",
+    "CheckpointLoaderSimple": "loading checkpoint",
+    "UNETLoader": "loading model",
+    "CLIPLoader": "loading text encoder",
+    "VAELoader": "loading VAE",
+    "CLIPTextEncode": "encoding prompt",
+    "KSampler": "sampling",
+    "KSamplerAdvanced": "sampling",
+    "VAEDecode": "decoding",
+    "VAEEncode": "encoding image",
+    "SaveImage": "saving",
+    "SaveWEBM": "encoding video",
+    "SaveAnimatedWEBP": "encoding video",
+    "LoadImage": "reading reference",
+    "ImagePadForOutpaint": "padding canvas",
+}
+
+
+def stage_for(graph: dict, node_id) -> str:
+    """Human name for whichever node ComfyUI says it is executing."""
+    cls = (graph.get(str(node_id)) or {}).get("class_type", "")
+    return NODE_STAGES.get(cls, cls.lower() or "rendering")
+
+
+async def _pump(ws, handler):
+    async for msg in ws:
+        if isinstance(msg, (bytes, bytearray)):
+            continue          # preview frames; we do not surface these
+        try:
+            packet = json.loads(msg)
+        except ValueError:
+            continue
+        try:
+            handler(packet.get("type", ""), packet.get("data") or {})
+        except Exception:
+            pass              # a bad telemetry frame must not kill the render
+
+
+@contextlib.asynccontextmanager
+async def progress_socket(client_id: str, handler):
+    """Stream this client's execution events to `handler(type, data)`.
+
+    Yields immediately whether or not the socket opened, so callers can wrap
+    a submit-and-poll block in it unconditionally.
+    """
+    ws = None
+    task = None
+    try:
+        ws = await asyncio.wait_for(
+            websockets.connect(f"{WS_URL}?clientId={client_id}", max_size=None),
+            timeout=10,
+        )
+        task = asyncio.create_task(_pump(ws, handler))
+    except Exception:
+        ws = task = None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        if ws:
+            with contextlib.suppress(Exception):
+                await ws.close()
+
+
+async def pending_ids() -> set[str]:
+    """Prompt ids the node is running or has queued.
+
+    A requeue after the desktop slept must not blindly resubmit: the node may
+    still be holding - or already running - the prompt from the last attempt,
+    and a second submit renders the same job twice.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{COMFY_URL}/queue")
+            r.raise_for_status()
+            body = r.json()
+    except Exception as e:
+        raise ComfyOffline(str(e)) from e
+    ids = set()
+    for key in ("queue_running", "queue_pending"):
+        for item in body.get(key) or []:
+            # Entries are [number, prompt_id, graph, extra, outputs].
+            if len(item) > 1 and isinstance(item[1], str):
+                ids.add(item[1])
+    return ids
+
+
+async def pending_prompt(prompt_id: str) -> dict | None:
+    """Recover the submitted graph and telemetry client, including desktop jobs."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{COMFY_URL}/queue")
+            r.raise_for_status()
+        for key in ("queue_running", "queue_pending"):
+            for item in r.json().get(key) or []:
+                if len(item) >= 4 and item[1] == prompt_id:
+                    return {"graph": item[2], "client_id": item[3].get("client_id"),
+                            "created": item[3].get("create_time")}
+        return None
+    except Exception as e:
+        raise ComfyOffline(str(e)) from e
 
 
 async def history(prompt_id: str) -> dict | None:

@@ -35,6 +35,39 @@ class DeliverError(Exception):
     pass
 
 
+async def _watch(cmd: list[str], seconds: float, on_progress) -> None:
+    """Run an encode, reporting real progress from ffmpeg's own counter.
+
+    `-progress pipe:1` prints `key=value` lines as it encodes; `out_time_us`
+    against the known source duration is an exact percentage, not a guess.
+    stderr is drained concurrently - ffmpeg fills that pipe and blocks if
+    nobody reads it.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+    async def pump():
+        async for raw in proc.stdout:
+            key, _, value = raw.decode(errors="replace").strip().partition("=")
+            if key in ("out_time_us", "out_time_ms") and seconds > 0:
+                try:
+                    done = int(value) / 1_000_000
+                except ValueError:
+                    continue
+                on_progress(min(0.99, done / seconds), stage="encoding for Instagram")
+
+    err_chunks: list[bytes] = []
+
+    async def drain():
+        err_chunks.append(await proc.stderr.read())
+
+    await asyncio.gather(pump(), drain())
+    await proc.wait()
+    if proc.returncode != 0:
+        tail = b"".join(err_chunks).decode(errors="replace").strip().splitlines()[-6:]
+        raise DeliverError(f"ffmpeg failed: {' | '.join(tail)}\ncmd: {shlex.join(cmd)}")
+
+
 async def _run(cmd: list[str]) -> str:
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -66,7 +99,8 @@ async def probe(path: Path) -> dict:
     return d
 
 
-async def deliver(src: Path, out_name: str, target: str = "reel") -> dict:
+async def deliver(src: Path, out_name: str, target: str = "reel",
+                  on_progress=None) -> dict:
     """Re-encode `src` into an Instagram-ready mp4. Returns what it did."""
     if not src.exists():
         raise DeliverError(f"{src.name} no longer exists")
@@ -96,7 +130,13 @@ async def deliver(src: Path, out_name: str, target: str = "reel") -> dict:
     else:
         cmd += ["-an"]
     cmd += [str(dst)]
-    await _run(cmd)
+    duration = float(info.get("duration") or 0)
+    if on_progress and duration > 0:
+        await _watch(["ffmpeg", "-progress", "pipe:1", "-nostats", *cmd[1:]],
+                     duration, on_progress)
+        on_progress(1.0, stage="done")
+    else:
+        await _run(cmd)
 
     final = await probe(dst)
     return {

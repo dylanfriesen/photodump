@@ -1,8 +1,12 @@
 const $ = (id) => document.getElementById(id);
 const api = async (url, opts) => {
-  const r = await fetch(url, opts);
-  const body = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, body };
+  try {
+    const r = await fetch(url, { ...opts, signal: opts?.signal || AbortSignal.timeout(120000) });
+    const body = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, body };
+  } catch {
+    return { ok: false, status: 0, body: { detail: 'Connection lost. Please try again.' } };
+  }
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -17,6 +21,45 @@ let REEL_MODE = false;
 let IMAGES = [];      // normalised tiles currently in the grid
 let REFS = [];        // uploaded references, for the 'my photos' source
 let NODE = { online: false, current: null, queued: 0 };
+
+/* ---------- toasts ----------
+   Every queueing action used to be silent on success and silent on failure
+   too - `await api(...)` with no check. So a 500 looked exactly like a job
+   that queued fine, and a job that queued fine looked like nothing happened. */
+function toast(text, kind = 'ok', ms = 4200) {
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.innerHTML = `<span class="dot"></span><span>${esc(text)}</span>
+                  <span class="spacer"></span><button aria-label="dismiss">&times;</button>`;
+  const close = () => {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 200);
+  };
+  el.querySelector('button').onclick = close;
+  $('toasts').appendChild(el);
+  setTimeout(close, ms);
+}
+
+/* Queue something and say so. Returns the parsed body, or null on failure -
+   callers that need to keep going check for null. */
+async function queue(url, payload, describe) {
+  const { ok, body } = await api(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!ok) {
+    toast(body.detail || body.error || 'Could not queue that.', 'bad', 7000);
+    return null;
+  }
+  const ids = body.queued || [];
+  const local = url === '/api/reels' || url.endsWith('/deliver');
+  const where = NODE.online || local ? '' : ' — will run when the desktop wakes';
+  toast(`${describe(ids)}${where}`, NODE.online ? 'ok' : 'teal');
+  refreshJobs();
+  pollStatus.last = undefined;
+  return body;
+}
+let PROGRESS = null;   // live progress for the job in flight, or null
 
 /* ---------- segmented control ----------
    The design replaced several <select>s with segmented controls. app.js reads
@@ -40,9 +83,34 @@ function initSeg(el) {
   });
 }
 
+/* ---------- form memory ----------
+   Phones evict background tabs aggressively, and losing a half-written
+   prompt to a tab reload is the kind of small loss that stops you using a
+   tool from your phone at all. */
+const REMEMBER = ['subject-a', 'subject-b', 'mode', 'extra', 'negative',
+                  'ex-prompt', 're-bpm', 're-beats', 're-seconds'];
+const STORE_KEY = 'photodump.form.v1';
+
+function saveForm() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(
+      Object.fromEntries(REMEMBER.map((id) => [id, $(id).value]))));
+  } catch { /* private mode, quota - not worth surfacing */ }
+}
+
+function restoreForm() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch { return; }
+  if (!saved || typeof saved !== 'object') return;
+  for (const id of REMEMBER) {
+    if (typeof saved[id] === 'string') $(id).value = saved[id];
+  }
+}
+
 /* ---------- boot ---------- */
 async function boot() {
-  const { body } = await api('/api/config');
+  const { ok, body } = await api('/api/config');
+  if (!ok) { toast('Cannot reach Photodump. Retrying…', 'bad'); setTimeout(boot, 5000); return; }
   CONFIG = body;
 
   $('mode').innerHTML = Object.entries(body.modes)
@@ -59,6 +127,10 @@ async function boot() {
   $('empty-starters').innerHTML = chips;
 
   $('node-bars').innerHTML = [0, 1, 2, 3, 4].map((i) => `<i style="height:${6 + i * 2}px"></i>`).join('');
+
+  restoreForm();
+  REMEMBER.forEach((id) => $(id).addEventListener('input', saveForm));
+  $('mode').addEventListener('change', saveForm);
 
   switchScreen('studio');
   syncHint(); syncCounts(); syncFeather(); syncSelection();
@@ -80,8 +152,85 @@ const DOT = {
   rendering: '<span class="lvl"></span><span class="lvl"></span><span class="lvl"></span>',
 };
 
+/* ---------- progress ----------
+   The node reports a real step count over its websocket; the server turns
+   that into a percent. `estimated` means nothing has reported yet and the
+   number is derived from how long this kind of job usually takes - shown
+   dimmer, and never presented as a measurement. */
+function fmtDuration(s) {
+  if (s == null) return '';
+  s = Math.round(s);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function renderProgress(p) {
+  const row = $('node-prog');
+  const rule = document.querySelector('.node-rule');
+  const fill = $('node-fill');
+  const changed = (p?.job_id ?? null) !== (PROGRESS?.job_id ?? null);
+  PROGRESS = p;
+  if (changed) refreshJobs();
+
+  if (!p) {
+    row.hidden = true;
+    fill.style.width = '0';
+    rule.classList.remove('measured', 'estimated');
+    rule.removeAttribute('aria-valuenow');
+    rule.removeAttribute('aria-valuetext');
+    document.title = 'photodump';
+    return;
+  }
+
+  // A job can be in flight with no percentage - a re-attached render, or the
+  // first of its kind, where there is no honest number to show. The phase and
+  // the elapsed clock still are, so the row stays and only the bar goes.
+  row.hidden = false;
+  const known = p.percent != null;
+  const pct = known ? Math.round(p.percent) : 0;
+  $('prog-pct').textContent = known ? `${pct}%` : '—';
+  $('prog-pct').style.color = known && !p.estimated ? 'var(--lime)' : 'var(--mute-2)';
+  $('prog-stage').textContent = [
+    p.steps ? `step ${p.step}/${p.steps}` : '',
+    p.stage,
+    known && p.estimated ? '(estimate)' : '',
+  ].filter(Boolean).join(' · ');
+  $('prog-eta').textContent = p.eta != null
+    ? `~${fmtDuration(p.eta)} left`
+    : `${fmtDuration(p.elapsed)} elapsed`;
+
+  fill.style.width = `${pct}%`;
+  if (known) rule.setAttribute('aria-valuenow', String(pct));
+  else rule.removeAttribute('aria-valuenow');
+  fill.parentElement.setAttribute('aria-valuetext', `${$('prog-stage').textContent}; ${$('prog-eta').textContent}`);
+  rule.classList.toggle('measured', known && !p.estimated);
+  rule.classList.toggle('estimated', known && !!p.estimated);
+
+  // The queue list only re-renders when the queue itself changes, so the bar
+  // on the running row is nudged directly rather than rebuilding the list
+  // 50 times a minute.
+  const bar = document.querySelector(`.job .bar[data-bar="${p.job_id}"]`);
+  if (bar) {
+    bar.hidden = !known;
+    bar.firstElementChild.style.width = `${pct}%`;
+    bar.classList.toggle('estimated', !!p.estimated);
+  }
+  const stage = document.querySelector(`[data-job-progress="${p.job_id}"]`);
+  if (stage) stage.textContent = ` · ${$('prog-stage').textContent} · ${known ? pct + '% · ' : ''}${$('prog-eta').textContent}`;
+  // Percentage in the tab title, so a backgrounded tab still answers
+  // "is it done yet" without switching to it.
+  document.title = known ? `${pct}% · photodump` : 'photodump';
+}
+
 async function pollStatus() {
-  const { body } = await api('/api/status');
+  const { ok, body } = await api('/api/status', { signal: AbortSignal.timeout(10000) });
+  if (!ok) {
+    $('node-text').textContent = 'Connection lost · reconnecting…';
+    renderProgress(null);
+    setTimeout(pollStatus, 5000);
+    return;
+  }
   NODE = body;
   const state = body.current != null ? 'rendering' : body.online ? 'ready' : 'asleep';
   document.body.dataset.node = state;
@@ -91,6 +240,7 @@ async function pollStatus() {
     : state === 'ready'
       ? `node ready · ${body.queued} queued`
       : `desktop asleep · ${body.queued} queued, will drain on wake`;
+  renderProgress(body.progress);
 
   const tint = state === 'rendering' ? 'var(--lime)' : state === 'ready' ? 'var(--teal)' : 'var(--violet)';
   [...$('node-bars').children].forEach((b, i) => {
@@ -125,7 +275,9 @@ async function pollStatus() {
     refreshGallery(); refreshJobs();
   }
   pollStatus.last = `${body.current}|${body.queued}`;
-  setTimeout(pollStatus, busy ? 3000 : 10000);
+  // A percentage that updates every 3s looks stuck; 1.2s is smooth and is
+  // still one cheap request against a loopback server.
+  setTimeout(pollStatus, busy ? 1200 : 10000);
 }
 
 async function refreshPreflight() {
@@ -236,14 +388,16 @@ $('btn-preview').onclick = async () => {
 
 $('btn-generate').onclick = async (e) => {
   const v = formValues();
-  if (!v.subject_a.trim() || !v.subject_b.trim()) { alert('Both sources need a value.'); return; }
-  e.currentTarget.disabled = true;
-  await api('/api/generate', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(v),
-  });
-  e.currentTarget.disabled = false;
-  refreshJobs();
-  pollStatus.last = undefined;
+  if (!v.subject_a.trim() || !v.subject_b.trim()) {
+    toast('Both sources need a value.', 'bad');
+    ($('subject-a').value.trim() ? $('subject-b') : $('subject-a')).focus();
+    return;
+  }
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  await queue('/api/generate', v, (ids) =>
+    `Queued ${ids.length} render${ids.length === 1 ? '' : 's'} · #${ids[0]}${ids.length > 1 ? `–#${ids[ids.length - 1]}` : ''}`);
+  btn.disabled = false;
 };
 
 function applyStarter(i) {
@@ -253,6 +407,7 @@ function applyStarter(i) {
   $('mode').value = s.mode;
   $('extra').value = s.extra || '';
   syncHint();
+  saveForm();
   switchTask('fuse');
 }
 $('starters').onclick = (e) => {
@@ -277,7 +432,8 @@ $('btn-save-recipe').onclick = async () => {
 };
 
 async function refreshRecipes() {
-  const { body } = await api('/api/recipes');
+  const { ok, body } = await api('/api/recipes');
+  if (!ok || !Array.isArray(body)) return;
   $('recipes').innerHTML = body.map((r) =>
     `<span class="chip recipe" data-recipe='${esc(JSON.stringify(r))}'>
        <span>${esc(r.name)}</span><span class="x" data-del="${r.id}">&times;</span>
@@ -298,11 +454,13 @@ $('recipes').onclick = async (e) => {
   $('extra').value = r.extra || '';
   $('negative').value = r.negative || '';
   syncHint();
+  saveForm();
 };
 
 /* ---------- references ---------- */
 async function refreshRefs() {
-  const { body } = await api('/api/refs');
+  const { ok, body } = await api('/api/refs');
+  if (!ok || !Array.isArray(body)) return;
   const imgs = body.filter((r) => r.kind !== 'audio');
   REFS = imgs;
   const opts = imgs.map((r) => `<option value="${r.id}">${esc(r.label)} (${esc(r.kind)})</option>`).join('');
@@ -335,7 +493,8 @@ $('ref-form').onsubmit = async (e) => {
   fd.append('label', $('ref-label').value);
   fd.append('kind', $('ref-kind').value);
   const r = await fetch('/api/refs', { method: 'POST', body: fd });
-  if (!r.ok) { alert('Upload failed: ' + (await r.text())); return; }
+  if (!r.ok) { toast(`Upload failed: ${await r.text()}`, 'bad', 7000); return; }
+  toast(`Uploaded ${$('ref-label').value || $('ref-file').files[0].name}`);
   e.target.reset();
   $('drop-text').textContent = 'drop an image, or browse';
   refreshRefs();
@@ -397,7 +556,8 @@ function refAsTile(r) {
 
 async function refreshGallery() {
   const fav = $('only-fav').checked ? '?favourites=true' : '';
-  const { body: raw } = await api('/api/images' + fav);
+  const { ok, body: raw } = await api('/api/images' + fav);
+  if (!ok || !Array.isArray(raw)) return;
   // Uploaded photos only join the grid while picking shots for a reel.
   const src = REEL_MODE ? $('re-source').value : 'renders';
   const body = [
@@ -408,8 +568,18 @@ async function refreshGallery() {
   const empty = body.length === 0;
   $('gallery-empty').hidden = !empty;
   $('grid').hidden = empty;
-  $('grid').innerHTML = body.map(tileMarkup).join('');
-  [...$('grid').children].forEach(sizeTile);
+
+  // Rebuilding the grid restarts every lazy image load, which reads as a
+  // flash across the whole pane. The poll calls this whenever a job changes
+  // state, so skip the rebuild unless a tile, a star or a pick actually moved.
+  const sig = JSON.stringify([body.map((i) => [i.key, i.favourite]), SELECTED]);
+  if (sig !== refreshGallery.sig) {
+    refreshGallery.sig = sig;
+    $('grid').innerHTML = body.map(tileMarkup).join('');
+    [...$('grid').children].forEach(sizeTile);
+  }
+  // Keep captions and recipes current without restarting image/video loads.
+  [...$('grid').children].forEach((fig, index) => { fig.dataset.img = JSON.stringify(body[index]); });
 
   const favs = body.filter((i) => i.favourite).length;
   $('gallery-meta').textContent = `${body.length} item${body.length === 1 ? '' : 's'} · ${favs} favourite${favs === 1 ? '' : 's'}`;
@@ -498,31 +668,32 @@ $('re-transition').onchange = syncSelection;
 $('sel-clear').onclick = () => { SELECTED = []; syncSelection(); refreshGallery(); };
 
 $('sel-favs').onclick = async () => {
-  const { body } = await api('/api/images?favourites=true');
+  const { ok, body } = await api('/api/images?favourites=true');
+  if (!ok) { toast(body.detail || 'Could not load favourites.', 'bad'); return; }
   SELECTED = body.filter((i) => !isVideo(i.filename)).map((i) => `image:${i.id}`).reverse();
   syncSelection();
   refreshGallery();
 };
 
 async function buildReel(btn) {
-  if (SELECTED.length < 2) { alert('Pick at least two stills.'); return; }
+  if (SELECTED.length < 2) {
+    toast('Pick at least two stills in the gallery first.', 'bad');
+    if (isMobile()) switchTab('gallery');
+    return;
+  }
   btn.disabled = true;
-  const { ok, body } = await api('/api/reels', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      shots: SELECTED.map((k) => { const [src, id] = k.split(':'); return { src, id: +id }; }),
-      bpm: $('re-timing').value === 'bpm' ? +$('re-bpm').value : null,
-      beats_per_shot: +$('re-beats').value,
-      seconds: +$('re-seconds').value,
-      motion: $('re-motion').value,
-      transition: $('re-transition').value,
-      audio_ref_id: $('re-audio').value ? +$('re-audio').value : null,
-    }),
-  });
+  // Reels build here on kanto, so this one really does start now.
+  const body = await queue('/api/reels', {
+    shots: SELECTED.map((k) => { const [src, id] = k.split(':'); return { src, id: +id }; }),
+    bpm: $('re-timing').value === 'bpm' ? +$('re-bpm').value : null,
+    beats_per_shot: +$('re-beats').value,
+    seconds: +$('re-seconds').value,
+    motion: $('re-motion').value,
+    transition: $('re-transition').value,
+    audio_ref_id: $('re-audio').value ? +$('re-audio').value : null,
+  }, () => `Building a ${SELECTED.length}-shot reel now`);
   btn.disabled = false;
-  if (!ok) { alert(body.detail || 'reel failed'); return; }
-  refreshJobs();
-  pollStatus.last = undefined;
+  if (body) switchTab('queue');
 }
 $('btn-reel').onclick = (e) => buildReel(e.currentTarget);
 document.querySelector('[data-build-reel]').onclick = (e) => buildReel(e.currentTarget);
@@ -530,30 +701,35 @@ document.querySelector('[data-build-reel]').onclick = (e) => buildReel(e.current
 /* ---------- extend ---------- */
 $('btn-extend').onclick = async (e) => {
   const refId = $('ex-ref').value;
-  if (!refId) { alert('Upload a source image under References first.'); return; }
+  if (!refId) {
+    toast('Upload a source image under References first.', 'bad');
+    switchTab('refs');
+    return;
+  }
   const scene = $('ex-prompt').value.trim();
-  if (!scene) { alert('Describe the finished scene so the model knows what to paint.'); return; }
-  e.currentTarget.disabled = true;
-  await api('/api/generate', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt: scene, workflow: 'outpaint', ref_id: +refId,
-      count: +$('ex-count').value,
-      extend_target: $('ex-target').value,
-      extend_anchor: $('ex-anchor').value,
-      feathering: +$('ex-feather').value,
-      steps: +$('steps').value, cfg: +$('cfg').value,
-      checkpoint: $('checkpoint').value || null,
-    }),
-  });
-  e.currentTarget.disabled = false;
-  refreshJobs();
-  pollStatus.last = undefined;
+  if (!scene) {
+    toast('Describe the finished scene so the model knows what to paint.', 'bad');
+    $('ex-prompt').focus();
+    return;
+  }
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  await queue('/api/generate', {
+    prompt: scene, workflow: 'outpaint', ref_id: +refId,
+    count: +$('ex-count').value,
+    extend_target: $('ex-target').value,
+    extend_anchor: $('ex-anchor').value,
+    feathering: +$('ex-feather').value,
+    steps: +$('steps').value, cfg: +$('cfg').value,
+    checkpoint: $('checkpoint').value || null,
+  }, (ids) => `Queued ${ids.length} extend${ids.length === 1 ? '' : 's'} · #${ids[0]}`);
+  btn.disabled = false;
 };
 
 /* ---------- queue ---------- */
 async function refreshJobs() {
-  const { body } = await api('/api/jobs');
+  const { ok, body } = await api('/api/jobs');
+  if (!ok || !Array.isArray(body)) return;
   const n = (s) => body.filter((j) => j.status === s).length;
   $('queue-meta').textContent =
     `${n('queued')} queued · ${n('running')} running · ${n('failed')} failed`;
@@ -561,9 +737,11 @@ async function refreshJobs() {
   $('jobs').innerHTML = body.map((j) => {
     const params = (() => { try { return JSON.parse(j.params); } catch { return {}; } })();
     const kind = params.workflow === 'reel' ? 'reel'
+      : params.workflow === 'deliver' ? 'Instagram encode'
       : params.workflow === 'outpaint' ? 'extend'
       : params.workflow === 'wan_i2v' ? 'animate' : 'fuse';
     const failed = j.status === 'failed';
+    const running = j.status === 'running' && PROGRESS && PROGRESS.job_id === j.id;
     return `
     <div class="job ${j.status}">
       <div class="st">
@@ -574,11 +752,16 @@ async function refreshJobs() {
         ${failed
           ? `<div class="err">${esc(j.error)}</div>`
           : `<span class="prompt">${esc(j.prompt)}</span>`}
-        <span class="jmeta">${esc(kind)}${params.aspect ? ` · ${esc(params.aspect)}` : ''}${j.attempts > 1 ? ` · attempt ${j.attempts}` : ''}</span>
+        <span class="jmeta">${esc(kind)}${params.aspect ? ` · ${esc(params.aspect)}` : ''}${j.attempts > 1 ? ` · attempt ${j.attempts}` : ''}${
+          running ? `<span data-job-progress="${j.id}"> · ${esc(PROGRESS.stage)}${PROGRESS.steps ? ` ${PROGRESS.step}/${PROGRESS.steps}` : ''}</span>` : ''}</span>
       </div>
       <div class="act">
         ${j.status === 'queued' ? `<button data-cancel="${j.id}">cancel</button>` : ''}
       </div>
+      ${running ? `
+      <div class="bar ${PROGRESS.estimated ? 'estimated' : ''}" data-bar="${j.id}" style="grid-column:2/-1" ${PROGRESS.percent == null ? 'hidden' : ''}>
+        <b style="width:${Math.round(PROGRESS.percent || 0)}%"></b>
+      </div>` : ''}
       ${(j.status === 'failed' || j.status === 'cancelled') ? `
       <div class="fixes" style="grid-column:2/-1">
         <button data-requeue="${j.id}" class="warn">requeue</button>
@@ -594,7 +777,8 @@ $('jobs').onclick = async (e) => {
     await api(`/api/jobs/${d.cancel}`, { method: 'DELETE' });
   } else if (d.requeue) {
     const { ok, body } = await api(`/api/jobs/${d.requeue}/requeue`, { method: 'POST' });
-    if (!ok) { alert(body.detail || 'could not requeue'); return; }
+    if (!ok) { toast(body.detail || 'Could not requeue.', 'bad'); return; }
+    toast(`Job #${d.requeue} back on the queue`);
   } else if (d.copyerr) {
     const j = (await api('/api/jobs')).body.find((x) => x.id === +d.copyerr);
     navigator.clipboard?.writeText(j?.error || '');
@@ -607,9 +791,32 @@ $('jobs').onclick = async (e) => {
 };
 
 /* ---------- lightbox ---------- */
+/* Stills and clips both page with the arrow keys. The gallery is the whole
+   point of the app; opening one image and having to close it to see the next
+   is the single most repeated action here. */
+function pageable() {
+  return IMAGES.filter((i) => !i.isRef);
+}
+
+function stepLightbox(delta) {
+  const list = pageable();
+  const at = list.findIndex((i) => i.key === CURRENT?.key);
+  const next = list[at + delta];
+  if (next) openLightbox(next);
+}
+
+function syncLbNav() {
+  const list = pageable();
+  const at = list.findIndex((i) => i.key === CURRENT?.key);
+  $('lb-prev').disabled = at <= 0;
+  $('lb-next').disabled = at < 0 || at >= list.length - 1;
+  $('lb-prev').hidden = $('lb-next').hidden = list.length < 2;
+}
+
 function openLightbox(img) {
   CURRENT = img;
   $('lightbox').hidden = false;
+  $('deliver-box').hidden = true;
   const vid = isVideo(img.filename);
   $('lb-img').hidden = vid;
   $('lb-vid').hidden = !vid;
@@ -626,7 +833,30 @@ function openLightbox(img) {
   $('lb-download').download = img.filename;
   setFav(img.favourite);
   renderCaption(img.caption, img.hashtags);
+  syncLbNav();
+
+  // "Reuse these settings" only means something for a render made from a
+  // recipe; extends and clips have no source A / source B to put back.
+  const recipe = (() => {
+    try { return JSON.parse(img.params || '{}').recipe || null; } catch { return null; }
+  })();
+  $('lb-reuse').hidden = !(recipe && recipe.subject_a);
+  $('lb-reuse').onclick = () => {
+    $('subject-a').value = recipe.subject_a || '';
+    $('subject-b').value = recipe.subject_b || '';
+    $('mode').value = recipe.mode || 'design_fusion';
+    $('extra').value = recipe.extra || '';
+    syncHint();
+    saveForm();
+    closeLb();
+    switchTask('fuse');
+    if (isMobile()) switchScreen('studio');
+    toast(`Loaded the recipe from #${img.id}`);
+  };
 }
+
+$('lb-prev').onclick = () => stepLightbox(-1);
+$('lb-next').onclick = () => stepLightbox(1);
 
 function setFav(on) {
   const b = $('lb-fav');
@@ -646,10 +876,17 @@ function renderCaption(caption, tags) {
 const closeLb = () => { $('lightbox').hidden = true; $('lb-vid').pause?.(); };
 $('lb-close').onclick = closeLb;
 $('lightbox').onclick = (e) => { if (e.target.id === 'lightbox') closeLb(); };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('lightbox').hidden) closeLb(); });
+document.addEventListener('keydown', (e) => {
+  if ($('lightbox').hidden) return;
+  if (e.key === 'Escape') return closeLb();
+  if (e.target.closest('input, textarea, select, video, [contenteditable="true"]')) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); stepLightbox(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); stepLightbox(1); }
+});
 
 $('lb-fav').onclick = async () => {
-  const { body } = await api(`/api/images/${CURRENT.id}/favourite`, { method: 'POST' });
+  const { ok, body } = await api(`/api/images/${CURRENT.id}/favourite`, { method: 'POST' });
+  if (!ok) { toast(body.detail || 'Could not save favourite.', 'bad'); return; }
   CURRENT.favourite = body.favourite;
   setFav(body.favourite);
   refreshGallery();
@@ -658,58 +895,62 @@ $('lb-fav').onclick = async () => {
 $('lb-caption-btn').onclick = async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true; btn.textContent = 'Drafting…';
+  // No body: the server drafts from the recipe this image was rendered with.
+  // Sending the studio form here captioned old images with whatever was
+  // currently typed in the panel.
   const { ok, body } = await api(`/api/images/${CURRENT.id}/caption`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(formValues()),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
   });
   btn.disabled = false; btn.textContent = 'Draft caption';
-  if (!ok) { alert(body.error || 'caption failed'); return; }
+  if (!ok) { toast(body.error || 'Caption drafting failed.', 'bad', 7000); return; }
   renderCaption(body.caption, body.hashtags.join(' '));
   refreshGallery();
 };
 
 $('lb-animate').onclick = () => { $('animate-box').hidden = !$('animate-box').hidden; };
 
-$('lb-deliver').onclick = async (e) => {
-  const btn = e.currentTarget;
-  const target = prompt('Instagram format — reel (9:16), feed (4:5) or square?', 'reel');
+$('lb-deliver').onclick = () => {
+  $('deliver-box').hidden = !$('deliver-box').hidden;
+  $('animate-box').hidden = true;
+};
+
+$('deliver-box').onclick = async (e) => {
+  const target = e.target.closest('[data-target]')?.dataset.target;
   if (!target) return;
-  btn.disabled = true;
-  const { ok, body } = await api(`/api/images/${CURRENT.id}/deliver`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ target: target.trim().toLowerCase() }),
-  });
-  btn.disabled = false;
-  if (!ok) { alert(body.detail || 'could not queue delivery'); return; }
-  closeLb();
-  refreshJobs();
-  pollStatus.last = undefined;
+  const body = await queue(`/api/images/${CURRENT.id}/deliver`, { target },
+    (ids) => `Encoding #${CURRENT.id} as ${target} · job #${ids[0]}`);
+  if (body) closeLb();
 };
 
 $('an-go').onclick = async (e) => {
   const motion = $('an-prompt').value.trim();
-  if (!motion) { alert('Describe the motion you want.'); return; }
-  e.currentTarget.disabled = true;
-  await api('/api/generate', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt: motion,
-      negative_full: 'static, still image, frozen, jpeg artifacts, watermark, text',
-      workflow: 'wan_i2v', src_image_id: CURRENT.id, count: 1,
-      seconds: +$('an-seconds').value, video_size: $('an-size').value,
-    }),
-  });
-  e.currentTarget.disabled = false;
-  closeLb();
-  refreshJobs();
-  pollStatus.last = undefined;
+  if (!motion) { toast('Describe the motion you want.', 'bad'); $('an-prompt').focus(); return; }
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const body = await queue('/api/generate', {
+    prompt: motion,
+    negative_full: 'static, still image, frozen, jpeg artifacts, watermark, text',
+    workflow: 'wan_i2v', src_image_id: CURRENT.id, count: 1,
+    seconds: +$('an-seconds').value, video_size: $('an-size').value,
+  }, (ids) => `Queued a clip from #${CURRENT.id} · job #${ids[0]}`);
+  btn.disabled = false;
+  if (body) closeLb();
 };
 
 $('lb-delete').onclick = async () => {
   if (!confirm('Delete this image?')) return;
-  await api(`/api/images/${CURRENT.id}`, { method: 'DELETE' });
-  closeLb();
-  refreshGallery();
+  const list = pageable();
+  const at = list.findIndex((i) => i.key === CURRENT.key);
+  const gone = CURRENT.id;
+  const { ok, body } = await api(`/api/images/${CURRENT.id}`, { method: 'DELETE' });
+  if (!ok) { toast(body.detail || 'Could not delete this image.', 'bad'); return; }
+  await refreshGallery();
+  // Stay in the lightbox on whatever moved into this slot - deleting a run of
+  // duds is one keystroke per image that way instead of four clicks.
+  const after = pageable();
+  const next = after[Math.min(at, after.length - 1)];
+  if (next) openLightbox(next); else closeLb();
+  toast(`Deleted #${gone}`);
 };
 
 /* ---------- tabs ---------- */

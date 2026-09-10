@@ -85,13 +85,30 @@ def _kenburns(index: int, seconds: float, motion: str) -> str:
             f"setsar=1,format=yuv420p")
 
 
+# How the three phases divide the progress bar. Per-shot encoding is by far
+# the slowest - zoompan renders every frame at 1.5x the output size - so it
+# owns most of the bar and the join and mux share the tail.
+SHOTS_SHARE = 0.75
+JOIN_SHARE = 0.92
+
+
 async def build(images: list[Path], out_name: str, *, bpm: float | None = None,
                 beats_per_shot: int = 4, seconds: float = 2.0,
                 motion: str = "kenburns", transition: str = "cut",
-                audio: Path | None = None) -> Path:
-    """Assemble `images` into a reel. Returns the written path."""
+                audio: Path | None = None, on_progress=None) -> Path:
+    """Assemble `images` into a reel. Returns the written path.
+
+    `on_progress(fraction, stage=...)` is called as each phase advances. There
+    is no single ffmpeg invocation to measure here - a reel is one encode per
+    shot plus a join - so progress is counted in shots, which is what the
+    wait actually consists of.
+    """
     if not images:
         raise ReelError("no images given")
+
+    def report(frac, stage):
+        if on_progress:
+            on_progress(frac, stage=stage)
 
     dur = shot_seconds(bpm, beats_per_shot, seconds)
     dst = OUT / out_name
@@ -102,6 +119,7 @@ async def build(images: list[Path], out_name: str, *, bpm: float | None = None,
         # 1. Render each still to its own clip.
         clips = []
         for i, img in enumerate(images):
+            report(SHOTS_SHARE * i / len(images), f"shot {i + 1} of {len(images)}")
             clip = work / f"{i:03d}.mp4"
             await _run([
                 "ffmpeg", "-y", "-loop", "1", "-framerate", str(FPS), "-i", str(img),
@@ -114,6 +132,7 @@ async def build(images: list[Path], out_name: str, *, bpm: float | None = None,
 
         # 2. Join. Hard cuts use the concat demuxer (exact, no re-encode drift);
         #    crossfades need a filter chain, so they are built separately.
+        report(SHOTS_SHARE, "joining shots")
         silent = work / "silent.mp4"
         if transition == "crossfade" and len(clips) > 1:
             await _crossfade(clips, dur, silent)
@@ -124,6 +143,7 @@ async def build(images: list[Path], out_name: str, *, bpm: float | None = None,
                         "-i", str(lst), "-c", "copy", str(silent)])
 
         # 3. Music, trimmed to the video and faded out.
+        report(JOIN_SHARE, "adding music" if audio and audio.exists() else "finishing")
         if audio and audio.exists():
             total = dur * len(clips)
             await _run([
@@ -134,6 +154,7 @@ async def build(images: list[Path], out_name: str, *, bpm: float | None = None,
             ])
         else:
             silent.replace(dst)
+        report(1.0, "done")
         return dst
     finally:
         for f in work.glob("*"):

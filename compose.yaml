@@ -17,3 +17,11 @@ services:
       - WAN_UNET=${WAN_UNET:-wan2.2_ti2v_5B_fp16.safetensors}
       - WAN_CLIP=${WAN_CLIP:-umt5_xxl_fp16.safetensors}
       - WAN_VAE=${WAN_VAE:-wan2.2_vae.safetensors}
+    networks:
+      default:
+      web:
+        aliases: ["${CONTAINER_NAME:-photodump}"]
+
+networks:
+  web:
+    external: true

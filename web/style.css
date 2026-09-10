@@ -140,6 +140,31 @@ body[data-node="rendering"] .node-rule { background: rgba(212,242,74,.14); }
   background: linear-gradient(90deg, rgba(212,242,74,0), var(--lime), rgba(212,242,74,0)); animation: sweep 1.9s linear infinite; }
 body[data-node="rendering"] .node-rule i { display: block; }
 
+/* Determinate fill. Once the node reports a real step count the sweep is
+   replaced by a measured bar - an indeterminate animation next to a
+   percentage reads as two different claims about the same thing. */
+.node-rule b { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  background: var(--lime); box-shadow: 0 0 8px rgba(212,242,74,.55);
+  transition: width .5s linear; }
+body[data-node="rendering"] .node-rule.measured i { display: none; }
+.node-rule.measured b { background: var(--lime); }
+.node-rule.estimated b { background: rgba(212,242,74,.42); box-shadow: none; }
+
+.node-prog { display: flex; align-items: baseline; gap: 8px; font-size: 11px;
+  color: var(--mute-2); }
+.node-prog .pct { font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+  color: var(--lime); font-variant-numeric: tabular-nums; }
+.node-prog .stage { color: var(--mute-2); min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.node-prog .eta { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--mute-4); }
+
+/* Same bar, inline on the running row in the queue. */
+.job .bar { position: relative; height: 3px; border-radius: 2px; margin-top: 7px;
+  background: rgba(255,255,255,.07); overflow: hidden; }
+.job .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  background: var(--lime); transition: width .5s linear; }
+.job .bar.estimated b { background: rgba(212,242,74,.4); }
+
 /* ---------- task tabs ---------- */
 .tabs.sub { flex: none; display: flex; gap: 2px; padding: 14px 16px 0; }
 .tabs.sub button {
@@ -446,7 +471,7 @@ select option { background: var(--input); color: var(--ink); }
 #lb-close { width: 24px; height: 24px; border-radius: var(--r); background: var(--input-hi); border: none; color: var(--ink-2); font-size: 13px; cursor: pointer; }
 #lb-close:hover { background: var(--red); color: #fff; }
 .lb-body { flex: 1; min-height: 0; display: flex; }
-.lb-stage { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 22px; background: radial-gradient(70% 70% at 50% 40%, #12161d, #08090c); }
+.lb-stage { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 22px; background: radial-gradient(70% 70% at 50% 40%, #12161d, #08090c); }
 #lb-img, #lb-vid { max-width: 100%; max-height: 100%; border-radius: var(--r); box-shadow: 0 22px 60px rgba(0,0,0,.55); object-fit: contain; }
 .lb-side { flex: none; width: 404px; border-left: 1px solid var(--line); background: var(--raised); display: flex; flex-direction: column; min-height: 0; }
 .lb-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
@@ -469,12 +494,12 @@ select option { background: var(--input); color: var(--ink); }
 #lb-fav.off { background: var(--input-hi); border-color: rgba(255,255,255,.1); color: var(--ink-2); }
 #lb-animate { grid-column: span 2; background: var(--input-hi); border-color: rgba(212,242,74,.3); color: var(--lime); font-weight: 600; }
 
-#animate-box { border: 1px solid rgba(212,242,74,.22); border-radius: var(--r); background: var(--raised-2); overflow: hidden; }
-#animate-box .head { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: rgba(212,242,74,.07); border-bottom: 1px solid rgba(212,242,74,.16); }
-#animate-box .head .cap { color: var(--lime); }
-#animate-box .body { padding: 11px; display: flex; flex-direction: column; gap: 10px; }
-#animate-box .foot { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10px; color: var(--mute-2); }
-#animate-box .foot i { width: 5px; height: 5px; border-radius: 50%; background: var(--violet); }
+#animate-box, #deliver-box { border: 1px solid rgba(212,242,74,.22); border-radius: var(--r); background: var(--raised-2); overflow: hidden; }
+#animate-box .head, #deliver-box .head { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: rgba(212,242,74,.07); border-bottom: 1px solid rgba(212,242,74,.16); }
+#animate-box .head .cap, #deliver-box .head .cap { color: var(--lime); }
+#animate-box .body, #deliver-box .body { padding: 11px; display: flex; flex-direction: column; gap: 10px; }
+#animate-box .foot, #deliver-box .foot { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10px; color: var(--mute-2); }
+#animate-box .foot i, #deliver-box .foot i { width: 5px; height: 5px; border-radius: 50%; background: var(--violet); }
 
 /* ---------- selection summary ---------- */
 .sel-summary { background: var(--raised-2); border: 1px solid var(--line-2); border-radius: var(--r); padding: 12px; display: flex; align-items: center; gap: 12px; }
@@ -611,3 +636,58 @@ select option { background: var(--input); color: var(--ink); }
   color: var(--amber); background: rgba(6,8,11,.72); border-radius: var(--r-sm);
   padding: 2px 5px; backdrop-filter: blur(3px);
 }
+
+
+/* ---------- toasts ----------
+   Queueing used to be silent: the button flickered and the job appeared on a
+   tab you were not looking at. These are the confirmation, and they are also
+   where failures surface - alert() blocks the page and reads as a crash. */
+#toasts {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px;
+  z-index: 60; display: flex; flex-direction: column; gap: 8px;
+  align-items: center; pointer-events: none; width: min(440px, calc(100vw - 32px));
+}
+#toasts .toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 11px 13px; border-radius: var(--r);
+  background: #161a21; border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 12px 34px rgba(0,0,0,.5);
+  font-size: 12.5px; color: var(--ink); animation: toast-in .18s ease-out;
+}
+#toasts .toast .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--lime); }
+#toasts .toast.bad { border-color: rgba(255,120,120,.35); }
+#toasts .toast.bad .dot { background: #ff7878; }
+#toasts .toast.teal .dot { background: var(--teal); }
+#toasts .toast .spacer { flex: 1; }
+#toasts .toast button {
+  flex: none; background: none; border: none; cursor: pointer; padding: 2px 4px;
+  color: var(--mute-3); font-family: var(--mono); font-size: 11px;
+}
+#toasts .toast button:hover { color: var(--ink); }
+#toasts .toast.leaving { animation: toast-out .18s ease-in forwards; }
+@keyframes toast-in  { from { opacity: 0; transform: translateY(10px); } }
+@keyframes toast-out { to   { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) {
+  #toasts .toast, #toasts .toast.leaving { animation: none; }
+}
+@media (max-width: 900px) {
+  /* clear the bottom tab bar */
+  #toasts { bottom: 74px; }
+}
+
+/* deliver format picker, same shape as the animate panel */
+.pickrow { display: flex; gap: 7px; }
+.pickrow .btn { flex: 1; justify-content: center; }
+
+/* lightbox paging */
+.lb-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 38px; height: 62px; display: grid; place-items: center;
+  background: rgba(12,14,18,.72); border: 1px solid rgba(255,255,255,.10);
+  border-radius: var(--r); color: var(--ink); font-size: 17px; cursor: pointer;
+}
+.lb-nav:hover { background: rgba(20,24,30,.92); }
+.lb-nav[disabled] { opacity: .25; cursor: default; }
+.lb-nav.prev { left: 10px; }
+.lb-nav.next { right: 10px; }
+@media (max-width: 900px) { .lb-nav { width: 32px; height: 52px; } }

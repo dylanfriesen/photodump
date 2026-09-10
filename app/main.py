@@ -150,6 +150,14 @@ async def api_generate(payload: dict):
         "video_size": payload.get("video_size", "story"),
         "seconds": float(payload.get("seconds", 3)),
         "fps": int(payload.get("fps", 16)),
+        # Kept so a caption can be drafted from what this image actually is,
+        # months later, rather than from whatever the form happens to say.
+        "recipe": {
+            "subject_a": payload.get("subject_a", ""),
+            "subject_b": payload.get("subject_b", ""),
+            "mode": payload.get("mode", "design_fusion"),
+            "extra": payload.get("extra", ""),
+        },
     }
     ref_id = payload.get("ref_id") or None
 
@@ -294,11 +302,26 @@ async def api_del_image(image_id: int):
 
 @app.post("/api/images/{image_id}/caption")
 async def api_caption(image_id: int, payload: dict):
+    """Draft a caption for this image, from the recipe it was rendered with.
+
+    The client used to send the studio form, which meant captioning an old
+    render described whatever was typed in the panel at that moment. The
+    image's own job is the only honest source.
+    """
+    with db() as conn:
+        row = conn.execute(
+            "SELECT j.prompt, j.params FROM images i JOIN jobs j ON j.id = i.job_id "
+            "WHERE i.id=?", (image_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "no such image")
+    recipe = (loads(row["params"]) or {}).get("recipe") or {}
+
     result = await captions.draft(
-        payload.get("subject_a", ""),
-        payload.get("subject_b", ""),
-        payload.get("mode", "design_fusion"),
-        payload.get("extra", ""),
+        recipe.get("subject_a", ""),
+        recipe.get("subject_b", ""),
+        recipe.get("mode", "design_fusion"),
+        recipe.get("extra", ""),
+        raw_prompt=row["prompt"],
     )
     if not result.get("ok"):
         return JSONResponse(result, status_code=503)

@@ -1,0 +1,6 @@
+.git
+.env*
+data
+valheim
+**/__pycache__
+**/*.pyc

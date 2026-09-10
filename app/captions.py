@@ -30,9 +30,29 @@ Write:
 
 Respond ONLY as JSON: {{"caption": "...", "hashtags": ["#tag", ...]}}"""
 
+# Extends, animations and anything queued before recipes were recorded have no
+# source A / source B - only the prompt they were rendered from. Asking for a
+# caption "about gardevoir x " would invent a mashup that is not in the image.
+FROM_PROMPT = """This post is an original illustration.
 
-async def draft(subject_a: str, subject_b: str, mode: str, extra: str = "") -> dict:
-    prompt = TEMPLATE.format(a=subject_a, b=subject_b, mode=mode, extra=extra or "none")
+It was rendered from this prompt: {prompt}
+
+Write:
+1. A caption of 1-2 sentences that describes what is in the picture with some
+   attitude. Do not mention prompts, tags, or how it was made.
+2. Exactly 12 hashtags - a mix of broad reach and niche fandom tags.
+
+Respond ONLY as JSON: {{"caption": "...", "hashtags": ["#tag", ...]}}"""
+
+
+async def draft(subject_a: str, subject_b: str, mode: str, extra: str = "",
+                raw_prompt: str = "") -> dict:
+    if subject_a.strip() and subject_b.strip():
+        prompt = TEMPLATE.format(a=subject_a, b=subject_b, mode=mode, extra=extra or "none")
+    elif raw_prompt.strip():
+        prompt = FROM_PROMPT.format(prompt=raw_prompt.strip()[:1200])
+    else:
+        return {"ok": False, "error": "nothing to write a caption about"}
     try:
         async with httpx.AsyncClient(timeout=120) as c:
             r = await c.post(
