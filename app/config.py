@@ -87,8 +87,22 @@ WAN_UNET = os.getenv("WAN_UNET", "wan2.2_ti2v_5B_fp16.safetensors")
 WAN_CLIP = os.getenv("WAN_CLIP", "umt5_xxl_fp16.safetensors")
 WAN_VAE = os.getenv("WAN_VAE", "wan2.2_vae.safetensors")
 
+# Which video model the Animate task uses. See VIDEO_BACKENDS in comfy.py.
+VIDEO_BACKEND = os.getenv("VIDEO_BACKEND", "wan")
+
+# LTX-2.5 model files, unset until the desktop session installs them.
+LTX_UNET = os.getenv("LTX_UNET", "LTX25-distilled-DiT-Q4_K_M.gguf")
+LTX_CLIP = os.getenv("LTX_CLIP", "gemma4-12b-with-proj-ltx-2.5-Q5_K_M.gguf")
+LTX_VAE = os.getenv("LTX_VAE", "ltx-2.5-video-vae-bf16.safetensors")
+
+# Output buckets for the Animate task. The 540-class entries exist because a
+# 16GB card running a GGUF quant is far happier there than at 720p, and an
+# upscale pass afterwards is cheap.
 VIDEO_SIZES = {
-    "story": (704, 1280),     # 9:16 reels
-    "portrait": (704, 896),   # 4:5 feed
+    "story": (704, 1280),      # 9:16 reels
+    "story_540": (544, 960),   # 9:16, the size AMD reports as workable
+    "portrait": (704, 896),    # 4:5 feed
+    "portrait_540": (544, 680),
     "square": (960, 960),
+    "square_540": (640, 640),
 }

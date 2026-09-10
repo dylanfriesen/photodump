@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import comfy, imageops, reels
+from . import comfy, deliver, imageops, reels
 from .config import DATA, OUT, REFS, THUMBS
 from .db import db, loads
 
@@ -38,11 +38,11 @@ async def _claim(local: bool = False):
     ever claimed *after* a successful health probe - otherwise a week of the
     desktop being asleep would burn through MAX_ATTEMPTS on every job.
     """
-    op = "=" if local else "!="
+    op = "IN" if local else "NOT IN"
     with db() as conn:
         row = conn.execute(
             "SELECT * FROM jobs WHERE status='queued' "
-            f"AND COALESCE(json_extract(params, '$.workflow'), '') {op} 'reel' "
+            f"AND COALESCE(json_extract(params, '$.workflow'), '') {op} ('reel','deliver') "
             "ORDER BY id LIMIT 1"
         ).fetchone()
         if not row:
@@ -144,6 +144,26 @@ async def _run_reel(job: dict):
                      (job["id"],))
 
 
+async def _run_deliver(job: dict):
+    """Re-encode an existing clip or reel for Instagram. No render node needed."""
+    params = loads(job["params"])
+    with db() as conn:
+        row = conn.execute("SELECT * FROM images WHERE id=?",
+                           (params.get("src_image_id"),)).fetchone()
+    if not row:
+        raise comfy.ComfyError("source clip no longer exists")
+
+    name = f"{job['id']}_ig.mp4"
+    info = await deliver.deliver(OUT / row["filename"], name,
+                                 params.get("target", "reel"))
+    params["result"] = info
+    with db() as conn:
+        conn.execute("INSERT INTO images (job_id, filename, seed) VALUES (?,?,0)",
+                     (job["id"], name))
+        conn.execute("UPDATE jobs SET status='done', finished_at=datetime('now'), "
+                     "params=? WHERE id=?", (json.dumps(params), job["id"]))
+
+
 async def _run(job: dict):
     params = loads(job["params"])
     ref_name = None
@@ -233,7 +253,10 @@ async def loop():
         if job:
             _state["current"] = job["id"]
             try:
-                await _run_reel(job)
+                if loads(job["params"]).get("workflow") == "deliver":
+                    await _run_deliver(job)
+                else:
+                    await _run_reel(job)
                 _state["last_error"] = ""
             except Exception as e:
                 _fail(job["id"], str(e))

@@ -432,6 +432,7 @@
             <a id="lb-download" class="btn" download>Download</a>
             <button id="lb-delete" class="btn danger">Delete</button>
             <button id="lb-animate" class="btn"><span>Animate this still</span></button>
+            <button id="lb-deliver" class="btn" hidden><span>Make Instagram mp4</span></button>
           </div>
           <div id="animate-box" hidden>
             <div class="head">
@@ -446,10 +447,14 @@
                   <input id="an-seconds" class="mono-in" type="number" step="0.5" min="1" max="5" value="3"></label>
                 <label class="f"><span class="cap">canvas</span>
                   <select id="an-size" class="mono-in">
-                    <option value="story">1080 &times; 1920 (9:16)</option>
+                    <option value="story_540">544 &times; 960 (9:16, fast)</option>
+                    <option value="story">704 &times; 1280 (9:16)</option>
+                    <option value="portrait_540">544 &times; 680 (4:5, fast)</option>
                     <option value="portrait">704 &times; 896 (4:5)</option>
+                    <option value="square_540">640 &times; 640 (1:1, fast)</option>
                     <option value="square">960 &times; 960 (1:1)</option>
                   </select></label>
+                <p class="hint" style="grid-column:span 2;margin:0">The 540 sizes render far faster on 16GB. Upscale after.</p>
               </div>
               <button id="an-go" class="btn go wide">Queue clip</button>
               <div class="foot"><i></i><span data-animate-hint></span></div>

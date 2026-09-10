@@ -614,7 +614,8 @@ function openLightbox(img) {
   $('lb-img').hidden = vid;
   $('lb-vid').hidden = !vid;
   $('animate-box').hidden = true;
-  $('lb-animate').hidden = vid;   // a clip is already the output
+  $('lb-animate').hidden = vid;      // a clip is already the output
+  $('lb-deliver').hidden = !vid;     // ...but a clip is what you deliver
   if (vid) { $('lb-vid').src = `/out/${img.filename}`; $('lb-img').removeAttribute('src'); }
   else { $('lb-img').src = `/out/${img.filename}`; $('lb-vid').removeAttribute('src'); }
 
@@ -668,6 +669,22 @@ $('lb-caption-btn').onclick = async (e) => {
 };
 
 $('lb-animate').onclick = () => { $('animate-box').hidden = !$('animate-box').hidden; };
+
+$('lb-deliver').onclick = async (e) => {
+  const btn = e.currentTarget;
+  const target = prompt('Instagram format — reel (9:16), feed (4:5) or square?', 'reel');
+  if (!target) return;
+  btn.disabled = true;
+  const { ok, body } = await api(`/api/images/${CURRENT.id}/deliver`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target: target.trim().toLowerCase() }),
+  });
+  btn.disabled = false;
+  if (!ok) { alert(body.detail || 'could not queue delivery'); return; }
+  closeLb();
+  refreshJobs();
+  pollStatus.last = undefined;
+};
 
 $('an-go').onclick = async (e) => {
   const motion = $('an-prompt').value.trim();

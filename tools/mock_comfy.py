@@ -35,6 +35,26 @@ from PIL import Image
 
 JOBS = {}
 ARGS = None
+_WEBM = None
+
+
+def _fake_webm():
+    """A real, decodable webm - so downstream re-encoding can be tested.
+
+    Cached: it costs an ffmpeg invocation and never varies.
+    """
+    global _WEBM
+    if _WEBM is None:
+        import subprocess, tempfile, os
+        path = os.path.join(tempfile.gettempdir(), "mock_clip.webm")
+        if not os.path.exists(path):
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=544x960:rate=16:duration=3",
+                 "-c:v", "libvpx-vp9", "-crf", "40", "-b:v", "0", "-pix_fmt", "yuv420p", path],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(path, "rb") as fh:
+            _WEBM = fh.read()
+    return _WEBM
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,8 +129,7 @@ class Handler(BaseHTTPRequestHandler):
     def _view(self, q):
         fn = q.get("filename", [""])[0]
         if fn.endswith(".webm"):
-            # EBML magic plus filler - proves the transfer path, not playable.
-            return self._send(200, b"\x1a\x45\xdf\xa3" + b"\x00" * 4096, "video/webm")
+            return self._send(200, _fake_webm(), "video/webm")
         buf = io.BytesIO()
         Image.new("RGB", (832, 1216), (124, 92, 255)).save(buf, "PNG")
         return self._send(200, buf.getvalue(), "image/png")

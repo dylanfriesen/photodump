@@ -10,8 +10,8 @@ from pathlib import Path
 
 import httpx
 
-from .config import (COMFY_URL, CHECKPOINT, ASPECTS, VIDEO_SIZES,
-                     WAN_UNET, WAN_CLIP, WAN_VAE)
+from .config import (COMFY_URL, CHECKPOINT, ASPECTS, VIDEO_SIZES, VIDEO_BACKEND,
+                     WAN_UNET, WAN_CLIP, WAN_VAE, LTX_UNET, LTX_CLIP, LTX_VAE)
 
 WORKFLOWS = Path(__file__).parent / "workflows"
 
@@ -137,35 +137,75 @@ def build(prompt: str, negative: str, params: dict, ref_name: str | None = None)
     return wf, seed
 
 
+# --- video backends -------------------------------------------------------
+# Adding a second video model should be a table entry plus a workflow JSON,
+# not new logic. Each entry says which node ids carry which role in that
+# model's graph. If a model's graph cannot be described this way, write a
+# sibling builder rather than contorting the table.
+#
+# `models` maps node id -> (input field, configured filename).
+VIDEO_BACKENDS = {
+    "wan": {
+        "workflow": "wan_i2v",
+        "models": {"20": ("unet_name", WAN_UNET),
+                   "21": ("clip_name", WAN_CLIP),
+                   "22": ("vae_name", WAN_VAE)},
+        "image": "10",          # LoadImage
+        "latent": "23",         # takes width / height / length
+        "sampler": "3",
+        "fps_nodes": {"24": "fps"},
+        "frame_multiple": 4,    # WAN wants 4n+1 frames
+        "defaults": {"steps": 20, "cfg": 5.0,
+                     "sampler_name": "uni_pc", "scheduler": "simple"},
+    },
+    # "ltx": filled in by whoever installs LTX-2.5. Export ComfyUI's official
+    # LTX-2.5 image-to-video template via Workflow -> Export (API Format),
+    # save it as app/workflows/ltx_i2v.json, then describe it here. LTX uses
+    # UnetLoaderGGUF / CLIPLoaderGGUF (type: ltxv) and separate video and
+    # audio VAEs, so it may need more than one entry in `models` and possibly
+    # a sibling builder. Do not write this from documentation - export it.
+}
+
+
 def _build_video(prompt: str, negative: str, params: dict, ref_name: str) -> tuple[dict, int]:
-    """WAN 2.2 image-to-video. Separate builder: it shares no nodes with SDXL."""
-    wf = _load("wan_i2v")
+    """Image-to-video, driven by the backend table above."""
+    name = params.get("video_backend") or VIDEO_BACKEND
+    spec = VIDEO_BACKENDS.get(name)
+    if spec is None:
+        raise ComfyError(
+            f"unknown video backend {name!r}; known: {sorted(VIDEO_BACKENDS)}")
+
+    wf = _load(spec["workflow"])
     seed = params.get("seed")
     seed = int(seed) if seed and int(seed) > 0 else random.randint(1, 2**31 - 1)
 
-    wf["20"]["inputs"]["unet_name"] = params.get("wan_unet") or WAN_UNET
-    wf["21"]["inputs"]["clip_name"] = params.get("wan_clip") or WAN_CLIP
-    wf["22"]["inputs"]["vae_name"] = params.get("wan_vae") or WAN_VAE
-    wf["10"]["inputs"]["image"] = ref_name
+    for node, (field, default) in spec["models"].items():
+        wf[node]["inputs"][field] = params.get(field) or default
+
+    wf[spec["image"]]["inputs"]["image"] = ref_name
     wf["6"]["inputs"]["text"] = prompt
     wf["7"]["inputs"]["text"] = negative
 
     w, h = VIDEO_SIZES.get(params.get("video_size", "story"), VIDEO_SIZES["story"])
     fps = int(params.get("fps", 16))
-    seconds = float(params.get("seconds", 3))
-    # WAN wants 4n+1 frames; anything else silently degrades the last chunk.
-    length = int(round(fps * seconds))
-    length = max(17, length - (length - 1) % 4)
+    length = int(round(fps * float(params.get("seconds", 3))))
+    m = spec.get("frame_multiple")
+    if m:
+        # e.g. WAN wants 4n+1; anything else silently degrades the last chunk.
+        length = max(m * 4 + 1, length - (length - 1) % m)
+    wf[spec["latent"]]["inputs"].update({"width": w, "height": h, "length": length})
 
-    wf["23"]["inputs"].update({"width": w, "height": h, "length": length})
-    wf["3"]["inputs"].update({
+    k = wf[spec["sampler"]]["inputs"]
+    d = spec["defaults"]
+    k.update({
         "seed": seed,
-        "steps": int(params.get("steps", 20)),
-        "cfg": float(params.get("cfg", 5.0)),
-        "sampler_name": params.get("sampler", "uni_pc"),
-        "scheduler": "simple",
+        "steps": int(params.get("steps", d["steps"])),
+        "cfg": float(params.get("cfg", d["cfg"])),
+        "sampler_name": params.get("sampler", d["sampler_name"]),
+        "scheduler": d["scheduler"],
     })
-    wf["24"]["inputs"]["fps"] = float(fps)
+    for node, field in spec.get("fps_nodes", {}).items():
+        wf[node]["inputs"][field] = float(fps)
     return wf, seed
 
 

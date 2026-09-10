@@ -9,7 +9,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import captions, comfy, preflight, reels, worker
+from . import captions, comfy, deliver, preflight, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows
 from .prompts import (MODES, STARTERS, compile_negative, compile_parts,
@@ -198,6 +198,28 @@ async def api_reel(payload: dict):
         )
     return {"queued": [cur.lastrowid], "shot_seconds": round(shot, 3),
             "total_seconds": round(reels.total_seconds(shot, len(ids), params["transition"]), 2)}
+
+
+@app.post("/api/images/{image_id}/deliver")
+async def api_deliver(image_id: int, payload: dict):
+    """Queue an Instagram-ready re-encode of an existing clip or reel."""
+    with db() as conn:
+        row = conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "no such image")
+    if not row["filename"].lower().endswith((".webm", ".mp4")):
+        raise HTTPException(400, "only clips and reels can be delivered")
+
+    target = payload.get("target", "reel")
+    if target not in deliver.TARGETS:
+        raise HTTPException(400, f"target must be one of {sorted(deliver.TARGETS)}")
+    params = {"workflow": "deliver", "src_image_id": image_id, "target": target}
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO jobs (prompt, negative, params) VALUES (?,?,?)",
+            (f"instagram {target} encode of #{image_id}", "", json.dumps(params)))
+    return {"queued": [cur.lastrowid], "target": target,
+            "size": deliver.TARGETS[target]}
 
 
 # ---------- queue + gallery ----------
