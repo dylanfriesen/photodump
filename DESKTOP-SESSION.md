@@ -32,9 +32,18 @@ That URL is also its API. You will use it to check your own work.
 - A preflight checker that will tell you exactly what this machine is missing
 - A 16-assertion test suite on kanto that passes against a mock
 
-**Nothing has ever talked to a real ComfyUI.** The five workflow graphs were
-written from documentation. Expect them to be wrong in places. Finding and
-fixing that is the point of this session, not a regression.
+**Stills have rendered on this machine; LTX video has not been driven by the
+app.** Renders completed against a real ComfyUI here, so the checkpoint and the
+txt2img path are proven. What is unproven is the rest: the graphs for img2img,
+outpaint, IP-Adapter, multi-reference and WAN video were written from
+documentation and may be wrong in places. Finding that is the point of this
+session, not a regression.
+
+Photodump can already *track* an LTX render - a previous session wrote progress
+handling for `LTXVLatentUpsampler`, `LTXVSpatioTemporalTiledVAEDecode` and
+`LTXVAudioVAEDecode` by watching one run - but it cannot *start* one. Exporting
+your working LTX workflow in API format is the single highest-value thing to do
+here. See `AT-THE-DESKTOP.md`.
 
 ---
 
