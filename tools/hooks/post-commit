@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Append every commit to PROGRESS.md so the log never depends on someone
+# remembering. Runs after the commit, so the line lands in the next one.
+# Deliberately a git hook rather than a Claude Code hook: this way commits from
+# Codex, or from Dylan by hand, are recorded too.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+log="$root/PROGRESS.md"
+[ -f "$log" ] || exit 0
+
+read -r hash subject <<<"$(git log -1 --format='%h %s')"
+date="$(git log -1 --format='%ad' --date=format:'%Y-%m-%d %H:%M')"
+author="$(git log -1 --format='%an')"
+line="- \`$hash\` $date ($author) — $subject"
+
+grep -qF "\`$hash\`" "$log" 2>/dev/null && exit 0
+printf '%s\n' "$line" >> "$log"

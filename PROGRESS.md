@@ -14,6 +14,43 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-10
 
+**Second Codex review: four more findings, all fixed**
+Two were bugs I introduced in the *previous* fix commit, which is the useful
+lesson — fixing six things at once created two new ones.
+
+1. *`syncCreate()` derived everything before normalising the selection.* It read
+   the mode at the top and only reset an invalid `img2img` choice twenty lines
+   later, so adding a second reference to a "keep composition" selection left
+   denoise on screen, skipped the capability guard, and still submitted
+   `ipadapter_multi` with `ip_weight`. Display and payload disagreed. Normalise
+   first, then derive.
+2. *Changing any control released the in-flight request lock.* `syncCreate()`
+   set `btn-create.disabled` from capability alone, clobbering the busy flag —
+   so nudging the count during a pending request re-enabled the button and let
+   you submit twice. Busy and eligibility are now separate, combined in one
+   place, with the submit handler re-checking both and clearing state in
+   `finally`.
+3. *A reference deleted between queueing and rendering silently shrank the
+   blend* — or dropped to txt2img if all were gone, with nothing in the record
+   saying so. The worker now fails the job naming the missing ids.
+4. *Preflight's txt2img entry was validating an img2img graph*, because it was
+   handed a dummy reference and auto-resolution picked img2img. Pre-dated the
+   multi-reference work. It now passes none for txt2img and two for
+   ipadapter_multi.
+
+Also closed two limitations Codex noted short of defects: the API now rejects
+`img2img` with several references (the UI blocked it, the endpoint did not), and
+the post-commit hook is versioned at `tools/hooks/` with `install-hooks.sh`,
+since `.git/hooks` never survives a clone.
+
+**Cost:** the first fix pass was verified only against the states I thought to
+try. Codex found the transition *between* states — one reference to two with a
+stale selection — which is exactly where I had not looked.
+
+Closed from the first review: all six. 24 smoke assertions, 12 unit tests,
+deployed to live with data intact. Still no GPU validation.
+
+
 **Fixed six issues Codex's review found in Create, and deployed it**
 All six were real; I verified each before changing anything rather than
 fixing on report alone.
@@ -118,3 +155,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 ## Log
 - `eff568c` 2026-09-10 12:13 (dylan) — Add PROGRESS.md and a post-commit hook that maintains it
 - `4b4a015` 2026-09-10 12:14 (dylan) — Add a working agreement both agents read
+- `20ed9fe` 2026-09-10 12:31 (dylan) — Fix six Create issues from Codex's review; deploy

@@ -58,6 +58,12 @@ and the schema is only created at startup, so the app 500s until restarted.
   requeue, not a clear failure.
 - **fp8 (e4m3fn) is broken on RDNA4/Windows.** fp16 or GGUF only.
 
+## After cloning
+
+`.git/hooks` is not versioned, so run **`./tools/install-hooks.sh`** once to get
+the post-commit progress logger. Without it, commits stop being recorded and
+nobody notices.
+
 ## Mechanics
 
 - Code is baked into the image: **`docker compose up -d --build`**. A plain

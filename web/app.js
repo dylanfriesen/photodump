@@ -20,6 +20,8 @@ let SELECTED = [];    // ordered shot keys ('image:5' / 'ref:3')
 let REEL_MODE = false;
 let CR_REFS = [];      // ordered reference ids for the Create task
 const NODE_CAPS = { has_ipadapter: true };   // until /api/node says otherwise
+let CREATE_BUSY = false;    // a generate request is in flight
+let CREATE_BLOCKED = false; // the resolved workflow cannot run on this node
 let IMAGES = [];      // normalised tiles currently in the grid
 let REFS = [];        // uploaded references, for the 'my photos' source
 let NODE = { online: false, current: null, queued: 0 };
@@ -566,20 +568,19 @@ function resolvedCreateMode() {
   return n > 1 ? 'ipadapter_multi' : 'img2img';
 }
 
+/* The button is disabled for two independent reasons - a capability problem, or
+   a request already in flight. Deriving it from only one of them let a control
+   change release the in-flight lock and allow a double submit. */
+function updateCreateButton() {
+  $('btn-create').disabled = CREATE_BUSY || CREATE_BLOCKED;
+}
+
 function syncCreate() {
   const n = CR_REFS.length;
-  const mode = resolvedCreateMode();
-  const styleMode = mode.startsWith('ipadapter');
 
-  $('cr-ref-count').textContent = n ? `${n} selected` : '';
-  $('cr-ip-row').hidden = n === 0;
-  // img2img strength is denoise; IP-Adapter strength is ip_weight. Showing the
-  // wrong one made the control a no-op.
-  $('cr-ipweight-wrap').hidden = !styleMode;
-  $('cr-denoise-wrap').hidden = styleMode;
-  $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
-
-  // img2img conditions on one latent, so extra references would be dropped.
+  // Normalise the selection FIRST. Deriving controls before this used a stale
+  // mode: adding a second reference while 'keep composition' was selected left
+  // denoise on screen and the guard un-run, while the payload used IP-Adapter.
   const single = $('cr-mode').querySelector('[value="img2img"]');
   if (single) {
     single.disabled = n > 1;
@@ -588,6 +589,16 @@ function syncCreate() {
       : 'keep composition (single ref)';
   }
   if (n > 1 && $('cr-mode').value === 'img2img') $('cr-mode').value = '';
+
+  const mode = resolvedCreateMode();
+  const styleMode = mode.startsWith('ipadapter');
+
+  $('cr-ref-count').textContent = n ? `${n} selected` : '';
+  $('cr-ip-row').hidden = n === 0;
+  // img2img strength is denoise; IP-Adapter strength is ip_weight.
+  $('cr-ipweight-wrap').hidden = !styleMode;
+  $('cr-denoise-wrap').hidden = styleMode;
+  $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
 
   const warn = [];
   if (styleMode && !NODE_CAPS.has_ipadapter) {
@@ -598,7 +609,8 @@ function syncCreate() {
     : n > 1 ? `${n} references blended as one style reference.`
     : 'Click to add, in order. Several can be combined — they are blended as one style reference.';
   hint.style.color = warn.length ? 'var(--amber)' : '';
-  $('btn-create').disabled = warn.length > 0;
+  CREATE_BLOCKED = warn.length > 0;
+  updateCreateButton();
 }
 
 $('cr-refs').onclick = (e) => {
@@ -661,21 +673,27 @@ $('btn-cr-preview').onclick = () => {
       : '');
 };
 
-$('btn-create').onclick = async (e) => {
+$('btn-create').onclick = async () => {
   const v = createValues();
   if (!v.prompt) { alert('Write a prompt first.'); return; }
-  // Capture the button now: currentTarget is null once the event has finished
-  // dispatching, which happens across the await.
-  const btn = e.currentTarget;
-  btn.disabled = true;
-  const { ok, body } = await api('/api/generate', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(v),
-  });
-  btn.disabled = false;
-  if (!ok) { alert(body.detail || 'could not queue'); return; }
-  refreshJobs();
-  pollStatus.last = undefined;
+  // Re-check here as well as in syncCreate: the button is only a hint, and the
+  // resolved workflow can change between renders of the panel.
+  if (CREATE_BLOCKED) { alert($('cr-ref-hint').textContent); return; }
+  if (CREATE_BUSY) return;
+  CREATE_BUSY = true;
+  updateCreateButton();
+  try {
+    const { ok, body } = await api('/api/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(v),
+    });
+    if (!ok) { alert(body.detail || 'could not queue'); return; }
+    refreshJobs();
+    pollStatus.last = undefined;
+  } finally {
+    CREATE_BUSY = false;
+    updateCreateButton();
+  }
 };
 
 ['cr-count', 'cr-ipweight', 'cr-denoise'].forEach((id) => { $(id).oninput = syncCreate; });

@@ -204,6 +204,14 @@ async def _run(job: dict):
             found = {r["id"]: r for r in conn.execute(
                 f"SELECT * FROM refs WHERE id IN ({','.join('?' * len(ids))})", ids)}
         refs = [found[i] for i in ids if i in found and found[i]["kind"] != "audio"]
+        # A reference deleted between queueing and running would otherwise
+        # shrink the blend, or drop to txt2img entirely, with nothing in the
+        # record saying the render was not what was asked for.
+        if len(refs) != len(ids):
+            gone = [i for i in ids if i not in found or found[i]["kind"] == "audio"]
+            raise comfy.ComfyError(
+                f"reference(s) {gone} are gone or unusable; "
+                "requeue after picking references that still exist")
 
         if len(refs) > 1:
             # Style conditioning takes them all; upload in the picked order.

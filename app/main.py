@@ -172,6 +172,12 @@ async def api_generate(payload: dict):
     ref_ids = [int(r) for r in (payload.get("ref_ids") or []) if r]
     if not ref_ids and ref_id:
         ref_ids = [int(ref_id)]
+    # The UI stops this, but the API is reachable directly and img2img loads
+    # only the first image - accepting the rest would silently discard them.
+    if len(ref_ids) > 1 and params["workflow"] == "img2img":
+        raise HTTPException(
+            400, "img2img conditions on a single image; pass one reference "
+                 "or use ipadapter_multi")
 
     ids = []
     with db() as conn:
