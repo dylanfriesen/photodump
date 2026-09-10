@@ -63,5 +63,29 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(collect.call_args.args[0], 'existing')
 
 
+class ConnectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_timeout_still_has_actionable_message(self):
+        import httpx
+        client = AsyncMock()
+        client.get.side_effect = httpx.ConnectTimeout("")
+        with patch.object(worker.comfy.httpx, 'AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value = client
+            result = await worker.comfy.health()
+        self.assertFalse(result['online'])
+        self.assertIn('ComfyUI connection timed out', result['error'])
+
+    async def test_unreachable_node_exposes_reason_without_claiming_gpu_job(self):
+        import asyncio
+        with patch.object(worker, 'recover', return_value=0), \
+             patch.object(worker, '_claim', AsyncMock(return_value=None)) as claim, \
+             patch.object(worker.comfy, 'health', AsyncMock(return_value={'online': False, 'error': 'ComfyUI timed out'})), \
+             patch.object(worker.asyncio, 'sleep', AsyncMock(side_effect=asyncio.CancelledError)), \
+             patch.dict(worker._state, {}, clear=False):
+            with self.assertRaises(asyncio.CancelledError):
+                await worker.loop()
+            self.assertEqual(worker._state['connection_error'], 'ComfyUI timed out')
+            claim.assert_awaited_once_with(local=True)
+
+
 if __name__ == '__main__':
     unittest.main()

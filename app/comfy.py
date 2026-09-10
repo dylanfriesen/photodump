@@ -39,8 +39,12 @@ async def health() -> dict:
             r = await c.get(f"{COMFY_URL}/system_stats")
             r.raise_for_status()
             return {"online": True, "stats": r.json()}
+    except httpx.TimeoutException:
+        return {"online": False, "error": "ComfyUI connection timed out. Check that ComfyUI is running and reachable over Tailscale."}
+    except httpx.ConnectError:
+        return {"online": False, "error": "Cannot connect to ComfyUI. Check the desktop's ComfyUI service and firewall."}
     except Exception as e:
-        return {"online": False, "error": str(e)}
+        return {"online": False, "error": f"ComfyUI health check failed: {str(e) or type(e).__name__}"}
 
 
 async def object_info() -> dict:

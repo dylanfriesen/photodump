@@ -21,7 +21,7 @@ POLL_IDLE = 20     # nothing to do / node asleep
 POLL_ACTIVE = 2    # a render is in flight
 MAX_ATTEMPTS = 5   # requeue ceiling; see _release
 
-_state = {"online": False, "current": None, "last_error": ""}
+_state = {"online": False, "current": None, "last_error": "", "connection_error": ""}
 
 
 def status() -> dict:
@@ -409,6 +409,7 @@ async def loop():
 
         h = await comfy.health()
         _state["online"] = h["online"]
+        _state["connection_error"] = h.get("error", "")
         if not h["online"]:
             _state["current"] = None
             await asyncio.sleep(POLL_IDLE)

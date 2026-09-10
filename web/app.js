@@ -53,7 +53,7 @@ async function queue(url, payload, describe) {
   }
   const ids = body.queued || [];
   const local = url === '/api/reels' || url.endsWith('/deliver');
-  const where = NODE.online || local ? '' : ' — will run when the desktop wakes';
+  const where = NODE.online || local ? '' : ' — waiting for ComfyUI to reconnect';
   toast(`${describe(ids)}${where}`, NODE.online ? 'ok' : 'teal');
   refreshJobs();
   pollStatus.last = undefined;
@@ -239,7 +239,8 @@ async function pollStatus() {
     ? `rendering job #${body.current} · ${body.queued} queued`
     : state === 'ready'
       ? `node ready · ${body.queued} queued`
-      : `desktop asleep · ${body.queued} queued, will drain on wake`;
+      : `ComfyUI unavailable · ${body.queued} queued · retrying`;
+  $('node-text').title = body.connection_error || '';
   renderProgress(body.progress);
 
   const tint = state === 'rendering' ? 'var(--lime)' : state === 'ready' ? 'var(--teal)' : 'var(--violet)';
@@ -250,13 +251,13 @@ async function pollStatus() {
   $('queue-badge').style.color = body.queued > 0 ? tint : 'var(--mute-4)';
 
   const hint = state === 'asleep'
-    ? 'Desktop is asleep — this will sit in the queue and drain on wake.'
+    ? (body.connection_error || 'Waiting for ComfyUI to reconnect. Queued jobs will start automatically.')
     : state === 'rendering'
       ? `Node is busy with job #${body.current} — yours starts next.`
       : 'Node is ready — this starts immediately.';
   document.querySelectorAll('[data-queue-hint]').forEach((e) => { e.textContent = hint; });
   document.querySelectorAll('[data-animate-hint]').forEach((e) => {
-    e.textContent = state === 'asleep' ? 'queues to the desktop · drains on wake' : 'starts on the desktop shortly';
+    e.textContent = state === 'asleep' ? 'waiting for ComfyUI · starts automatically when reachable' : 'starts on the desktop shortly';
   });
 
   const badge = $('queue-tab-badge');
