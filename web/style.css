@@ -691,3 +691,19 @@ select option { background: var(--input); color: var(--ink); }
 .lb-nav.prev { left: 10px; }
 .lb-nav.next { right: 10px; }
 @media (max-width: 900px) { .lb-nav { width: 32px; height: 52px; } }
+
+/* ---------- reference picker (Create task) ---------- */
+.refpick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.refpick .empty { grid-column: 1/-1; font-size: 11.5px; color: var(--mute-3); font-style: italic; }
+.refpick figure { margin: 0; position: relative; cursor: pointer; border-radius: var(--r); overflow: hidden;
+  border: 1px solid var(--line-2); aspect-ratio: 1; background: var(--raised-2); }
+.refpick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.refpick figure:hover { border-color: rgba(212,242,74,.45); }
+.refpick figure.on { border-color: var(--lime); }
+.refpick figure.on::after { content: ''; position: absolute; inset: 0; background: rgba(212,242,74,.14); }
+.refpick .n { position: absolute; left: 4px; top: 4px; width: 18px; height: 18px; border-radius: var(--r-sm);
+  background: var(--lime); color: var(--bg); font-family: var(--mono); font-size: 10px; font-weight: 600;
+  line-height: 18px; text-align: center; z-index: 2; }
+.refpick .lbl { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: 9px;
+  color: var(--ink-3); background: rgba(6,8,11,.72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) { .refpick { grid-template-columns: repeat(3, 1fr); } }

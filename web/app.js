@@ -18,6 +18,7 @@ let CONFIG = null;
 let CURRENT = null;   // item open in the lightbox
 let SELECTED = [];    // ordered shot keys ('image:5' / 'ref:3')
 let REEL_MODE = false;
+let CR_REFS = [];      // ordered reference ids for the Create task
 let IMAGES = [];      // normalised tiles currently in the grid
 let REFS = [];        // uploaded references, for the 'my photos' source
 let NODE = { online: false, current: null, queued: 0 };
@@ -120,7 +121,8 @@ async function boot() {
   $('aspect').innerHTML = body.aspects
     .map((a, i) => `<span data-value="${esc(a)}" class="${i === 0 ? 'on' : ''}">${esc(ratio[a] || a)}</span>`).join('');
 
-  ['aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source'].forEach((id) => initSeg($(id)));
+  $('cr-aspect').innerHTML = $('aspect').innerHTML;
+  ['aspect', 'cr-aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source'].forEach((id) => initSeg($(id)));
 
   const chips = body.starters.map((s, i) => `<button class="chip" data-starter="${i}">${esc(s.name)}</button>`).join('');
   $('starters').innerHTML = chips;
@@ -470,6 +472,7 @@ async function refreshRefs() {
   $('re-audio').innerHTML = '<option value="">no music</option>' +
     body.filter((r) => r.kind === 'audio').map((r) => `<option value="${r.id}">${esc(r.label)}</option>`).join('');
 
+  renderRefPicker(imgs);
   $('refs-meta').textContent = `${body.length} reference${body.length === 1 ? '' : 's'}`;
   $('ref-grid').innerHTML = body.map((r) => `
     <figure data-ref="${r.id}">
@@ -507,6 +510,87 @@ $('ref-grid').onclick = async (e) => {
   await api(`/api/refs/${e.target.dataset.del}`, { method: 'DELETE' });
   refreshRefs();
 };
+
+/* ---------- create: free-form prompt, any number of references ---------- */
+function renderRefPicker(imgs) {
+  CR_REFS = CR_REFS.filter((id) => imgs.some((r) => r.id === id));
+  $('cr-refs').innerHTML = imgs.length
+    ? imgs.map((r) => {
+        const at = CR_REFS.indexOf(r.id);
+        return `<figure class="${at >= 0 ? 'on' : ''}" data-pick="${r.id}">
+          <img src="/refs/${esc(r.filename)}" alt="${esc(r.label)}" loading="lazy">
+          ${at >= 0 ? `<span class="n">${at + 1}</span>` : ''}
+          <span class="lbl">${esc(r.label)}</span>
+        </figure>`;
+      }).join('')
+    : '<span class="empty">No references yet \u2014 upload some under References.</span>';
+  syncCreate();
+}
+
+function syncCreate() {
+  const n = CR_REFS.length;
+  $('cr-ref-count').textContent = n ? `${n} selected` : '';
+  // Reference strength only means anything once something is attached.
+  $('cr-ip-row').hidden = n === 0;
+  $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
+}
+
+$('cr-refs').onclick = (e) => {
+  const fig = e.target.closest('[data-pick]');
+  if (!fig) return;
+  const id = +fig.dataset.pick;
+  const at = CR_REFS.indexOf(id);
+  if (at >= 0) CR_REFS.splice(at, 1); else CR_REFS.push(id);
+  refreshRefs();
+};
+
+function createValues() {
+  const body = {
+    prompt: $('cr-prompt').value.trim(),
+    quality: $('cr-quality').checked,
+    negative: $('cr-negative').value,
+    aspect: $('cr-aspect').value,
+    count: +$('cr-count').value,
+    steps: +$('steps').value,
+    cfg: +$('cfg').value,
+    checkpoint: $('checkpoint').value || null,
+  };
+  if (CR_REFS.length) {
+    body.ref_ids = CR_REFS;
+    body.ip_weight = +$('cr-ipweight').value;
+    if ($('cr-mode').value) body.workflow = $('cr-mode').value;
+  }
+  return body;
+}
+
+$('btn-cr-preview').onclick = () => {
+  const v = createValues();
+  if (!v.prompt) { alert('Write a prompt first.'); return; }
+  const pos = v.quality ? `${CONFIG.quality}, ${v.prompt}` : v.prompt;
+  const el = $('cr-preview');
+  el.hidden = false;
+  el.textContent = `+ ${pos}\n\n- ${v.negative || '(defaults)'}` +
+    (CR_REFS.length ? `\n\n${CR_REFS.length} reference(s) at weight ${v.ip_weight}` : '');
+};
+
+$('btn-create').onclick = async (e) => {
+  const v = createValues();
+  if (!v.prompt) { alert('Write a prompt first.'); return; }
+  // Capture the button now: currentTarget is null once the event has finished
+  // dispatching, which happens across the await.
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const { ok, body } = await api('/api/generate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(v),
+  });
+  btn.disabled = false;
+  if (!ok) { alert(body.detail || 'could not queue'); return; }
+  refreshJobs();
+  pollStatus.last = undefined;
+};
+
+['cr-count', 'cr-ipweight'].forEach((id) => { $(id).oninput = syncCreate; });
 
 /* ---------- gallery ---------- */
 function tileMarkup(i) {

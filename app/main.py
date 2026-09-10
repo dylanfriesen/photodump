@@ -45,6 +45,8 @@ async def api_config():
         "starters": STARTERS,
         "aspects": list(ASPECTS.keys()),
         "checkpoint": CHECKPOINT,
+        # So the Create task can show exactly what it will prepend.
+        "quality": QUALITY,
     }
 
 
