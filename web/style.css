@@ -440,6 +440,9 @@ select option { background: var(--input); color: var(--ink); }
 .pill.done     { background: rgba(79,214,192,.11);  color: #7fdccb; }          .pill.done i     { background: var(--teal); }
 .pill.failed   { background: rgba(255,107,107,.13); color: var(--red-soft); }  .pill.failed i   { background: var(--red); }
 .pill.cancelled{ background: rgba(255,255,255,.06); color: var(--mute-2); }    .pill.cancelled i{ background: var(--mute-6); }
+/* Paused is deliberately warm rather than grey: the job is still alive and
+   waiting on the user, unlike cancelled. */
+.pill.paused   { background: rgba(255,184,77,.13);  color: var(--amber); }     .pill.paused i   { background: var(--amber); }
 
 /* ---------- references ---------- */
 #ref-form {

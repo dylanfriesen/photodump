@@ -195,5 +195,67 @@ import urllib.request
 imgs = json.load(urllib.request.urlopen('$B/api/images'))
 print(sum(1 for i in imgs if i['job_id']==jid))")" "1"
 
+say "10. stop cancels a queued job outright"
+start_mock --latency 60
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"subject_a":"mew","subject_b":"gojo","mode":"design_fusion","count":1}' >/dev/null
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"subject_a":"mew","subject_b":"nanami","mode":"design_fusion","count":1}' >/dev/null
+# The worker idles for POLL_IDLE (20s) between sweeps, so a freshly queued job
+# is not running yet. Wait for the claim rather than assuming it has happened.
+wait_for "[j for j in jobs if j['status']=='running']" 45 \
+  && ok "a job is rendering" || bad "nothing started rendering"
+QID=$(curl -s $B/api/jobs | field "[j['id'] for j in d if j['status']=='queued'][0]")
+curl -s -X POST $B/api/jobs/$QID/stop >/dev/null
+check "queued job is cancelled" \
+  "$(curl -s $B/api/jobs | field "[j['status'] for j in d if j['id']==$QID][0]")" "cancelled"
+
+say "11. pause a RUNNING job -> paused, and the attempt is given back"
+RID=$(curl -s $B/api/jobs | field "[j['id'] for j in d if j['status']=='running'][0]")
+curl -s -X POST $B/api/jobs/$RID/pause >/dev/null
+wait_for "[j for j in jobs if j['id']==$RID and j['status']=='paused']" 45 \
+  && ok "running job reached paused" || bad "running job never paused"
+# MAX_ATTEMPTS is 5; pausing must not spend one, or five pauses kill the job.
+check "pause did not burn an attempt" \
+  "$(curl -s $B/api/jobs | field "[j['attempts'] for j in d if j['id']==$RID][0]")" "0"
+check "paused jobs are not counted as queued" \
+  "$(curl -s $B/api/status | field "d['paused_jobs']")" "1"
+
+say "12. resume returns it to the queue and it completes"
+start_mock --latency 2
+curl -s -X POST $B/api/jobs/$RID/resume >/dev/null
+wait_for "[j for j in jobs if j['id']==$RID and j['status']=='done']" 120 \
+  && ok "resumed job completed" || bad "resumed job did not complete"
+
+say "13. a scheduled job is held until its time"
+FUTURE=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=45)).strftime('%Y-%m-%d %H:%M:%S'))")
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"subject_a":"eevee","subject_b":"nobara","mode":"design_fusion","count":1}' >/dev/null
+sleep 2
+SID=$(curl -s $B/api/jobs | field "d[0]['id']")
+curl -s -X POST $B/api/jobs/$SID/schedule -H 'Content-Type: application/json' \
+  -d "{\"not_before\":\"$FUTURE\"}" >/dev/null
+sleep 15
+check "scheduled job has not started" \
+  "$(curl -s $B/api/jobs | field "[j['status'] for j in d if j['id']==$SID][0]")" "queued"
+check "scheduled work is not reported as due" \
+  "$(curl -s $B/api/status | field "d['scheduled']")" "1"
+wait_for "[j for j in jobs if j['id']==$SID and j['status']=='done']" 120 \
+  && ok "ran once its time arrived" || bad "never ran after its scheduled time"
+
+say "14. pausing the QUEUE stops dispatch without touching the job"
+curl -s -X POST $B/api/queue/pause >/dev/null
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"subject_a":"snorlax","subject_b":"megumi","mode":"design_fusion","count":1}' >/dev/null
+sleep 20
+PID_=$(curl -s $B/api/jobs | field "d[0]['id']")
+check "job stays queued while the queue is paused" \
+  "$(curl -s $B/api/jobs | field "[j['status'] for j in d if j['id']==$PID_][0]")" "queued"
+check "status reports the queue as paused" \
+  "$(curl -s $B/api/status | field "str(d['queue_paused'])")" "True"
+curl -s -X POST $B/api/queue/resume >/dev/null
+wait_for "[j for j in jobs if j['id']==$PID_ and j['status']=='done']" 90 \
+  && ok "drained once the queue resumed" || bad "did not drain after resume"
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

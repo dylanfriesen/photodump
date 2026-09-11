@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     negative    TEXT NOT NULL DEFAULT '',
     params      TEXT NOT NULL DEFAULT '{}',
     ref_id      INTEGER,
-    status      TEXT NOT NULL DEFAULT 'queued',  -- queued|running|done|failed|cancelled
+    status      TEXT NOT NULL DEFAULT 'queued',  -- queued|running|paused|done|failed|cancelled
     error       TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     started_at  TEXT,
@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS images (
     caption    TEXT NOT NULL DEFAULT '',
     hashtags   TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -83,7 +88,30 @@ MIGRATIONS = [
     "ALTER TABLE refs ADD COLUMN width INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE refs ADD COLUMN height INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN prompt_id TEXT NOT NULL DEFAULT ''",
+    # Pause/stop are requests, not states: the API writes one here and the
+    # worker acts on it at its next poll. A state would race with the worker,
+    # which owns `status` for the job it is rendering.
+    "ALTER TABLE jobs ADD COLUMN control TEXT NOT NULL DEFAULT ''",
+    # Scheduling. NULL means "as soon as possible"; _claim skips the rest.
+    "ALTER TABLE jobs ADD COLUMN not_before TEXT",
+    # Video resume: the input-dir filename of the furthest checkpoint latent
+    # and the step it was taken at. Empty means "start from step 0".
+    "ALTER TABLE jobs ADD COLUMN resume_latent TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE jobs ADD COLUMN resume_step INTEGER NOT NULL DEFAULT 0",
 ]
+
+
+def setting(conn, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(conn, key: str, value: str):
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
 
 
 def init():

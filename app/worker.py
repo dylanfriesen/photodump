@@ -6,6 +6,7 @@ it just leaves it queued and tries again. Jobs drain when the PC wakes.
 """
 import asyncio
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from PIL import Image
 
 from . import comfy, deliver, imageops, progress, reels
 from .config import DATA, OUT, REFS, THUMBS
-from .db import db, loads
+from .db import db, loads, setting
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -24,10 +25,56 @@ MAX_ATTEMPTS = 5   # requeue ceiling; see _release
 _state = {"online": False, "current": None, "last_error": "", "connection_error": ""}
 
 
-def status() -> dict:
+class JobPaused(Exception):
+    """The user asked for the GPU back. Not a failure - the job stays alive."""
+
+
+class JobStopped(Exception):
+    """The user cancelled outright. Terminal; the job is not retried."""
+
+
+def _take_control(job_id: int) -> str:
+    """Read and clear any pending pause/stop request for this job.
+
+    Cleared on read so a request cannot be acted on twice - a pause that
+    survived into the next attempt would stop the resumed render instantly.
+    """
     with db() as conn:
-        q = conn.execute("SELECT COUNT(*) c FROM jobs WHERE status='queued'").fetchone()["c"]
-    return {**_state, "queued": q, "progress": progress.snapshot()}
+        row = conn.execute("SELECT control FROM jobs WHERE id=?", (job_id,)).fetchone()
+        want = (row["control"] if row else "") or ""
+        if want:
+            conn.execute("UPDATE jobs SET control='' WHERE id=?", (job_id,))
+    return want
+
+
+def queue_paused() -> bool:
+    with db() as conn:
+        return setting(conn, "queue_paused", "") == "1"
+
+
+def status() -> dict:
+    """Queue counts for the UI.
+
+    `queued` deliberately counts only jobs that are due: a scheduled job is
+    not waiting on the node, and counting it as queued makes an idle node look
+    backed up. Scheduled and paused are reported separately so the UI can say
+    why nothing is happening.
+    """
+    with db() as conn:
+        row = conn.execute(
+            "SELECT "
+            " SUM(status='queued' AND (not_before IS NULL OR not_before <= datetime('now'))) due,"
+            " SUM(status='queued' AND not_before > datetime('now')) scheduled,"
+            " SUM(status='paused') paused "
+            "FROM jobs"
+        ).fetchone()
+        paused = setting(conn, "queue_paused", "") == "1"
+    return {**_state,
+            "queued": row["due"] or 0,
+            "scheduled": row["scheduled"] or 0,
+            "paused_jobs": row["paused"] or 0,
+            "queue_paused": paused,
+            "progress": progress.snapshot()}
 
 
 async def _claim(local: bool = False):
@@ -37,12 +84,19 @@ async def _claim(local: bool = False):
     without checking the node, since they never touch it. Node jobs are only
     ever claimed *after* a successful health probe - otherwise a week of the
     desktop being asleep would burn through MAX_ATTEMPTS on every job.
+
+    A scheduled job (`not_before` in the future) is invisible here until its
+    time arrives. Comparing in SQL keeps "is it due yet" in one place; both
+    sides are UTC because every timestamp in this schema is datetime('now').
     """
     op = "IN" if local else "NOT IN"
     with db() as conn:
+        if setting(conn, "queue_paused", "") == "1":
+            return None
         row = conn.execute(
             "SELECT * FROM jobs WHERE status='queued' "
             f"AND COALESCE(json_extract(params, '$.workflow'), '') {op} ('reel','deliver') "
+            "AND (not_before IS NULL OR not_before <= datetime('now')) "
             "ORDER BY id LIMIT 1"
         ).fetchone()
         if not row:
@@ -73,6 +127,41 @@ def _release(job_id: int, reason: str = ""):
             return
         conn.execute(
             "UPDATE jobs SET status='queued', started_at=NULL WHERE id=? AND status='running'",
+            (job_id,),
+        )
+
+
+def _pause(job_id: int):
+    """Park a running job so it can be resumed later.
+
+    `attempts` is decremented to undo the increment _claim made when it took
+    the job. Without that, pausing a job five times fails it permanently with
+    "gave up after 5 attempts" - MAX_ATTEMPTS exists to stop a crash loop, and
+    a user pressing pause is not one. This is the whole reason pause does not
+    route through _release.
+
+    `paused` is a real status rather than a flag on `running` because
+    recover() requeues everything still marked running at startup, which would
+    silently un-pause the job on the next deploy.
+    """
+    with db() as conn:
+        conn.execute(
+            "UPDATE jobs SET status='paused', started_at=NULL, "
+            "attempts=MAX(0, attempts-1) WHERE id=? AND status='running'",
+            (job_id,),
+        )
+
+
+def _stop(job_id: int):
+    """Cancel a running job outright.
+
+    prompt_id is cleared so a later requeue cannot re-attach to the
+    interrupted prompt in _submit_once and silently resume what was cancelled.
+    """
+    with db() as conn:
+        conn.execute(
+            "UPDATE jobs SET status='cancelled', finished_at=datetime('now'), "
+            "prompt_id='', resume_latent='', resume_step=0 WHERE id=?",
             (job_id,),
         )
 
@@ -335,6 +424,19 @@ async def _await_outputs(prompt_id: str, job: dict, seed: int):
     while True:
         await asyncio.sleep(POLL_ACTIVE)
         polls += 1
+
+        # Checked before the history fetch. If the render happened to finish
+        # in the same tick, interrupting is a no-op on the node and the
+        # outputs are not lost: the job keeps its prompt_id, so resuming it
+        # re-attaches via _submit_once and collects them then.
+        want = _take_control(job["id"])
+        if want in ("pause", "stop"):
+            await comfy.interrupt()
+            if want == "pause":
+                await _checkpoint(prompt_id, job)
+                raise JobPaused("paused by request")
+            raise JobStopped("stopped by request")
+
         hist = await comfy.history(prompt_id)
         if not hist:
             # Slow multi-pass video can exceed 30 minutes. An acknowledged
@@ -383,6 +485,43 @@ async def _await_outputs(prompt_id: str, job: dict, seed: int):
             return
 
 
+async def _checkpoint(prompt_id: str, job: dict):
+    """Harvest the furthest sampling checkpoint an interrupted graph wrote.
+
+    Graphs that sample in one shot produce nothing here and the job resumes
+    from step 0 - which is the right trade for a 30-second still. Chunked
+    graphs emit a SaveLatent per chunk; ComfyUI records each in history as the
+    node completes, so an interrupted prompt still reports the chunks that
+    finished before the interrupt.
+
+    The file has to be round-tripped into the node's input directory:
+    SaveLatent writes to output/, LoadLatent enumerates input/, and ComfyUI
+    validates that enumeration at submit time.
+    """
+    hist = await comfy.history(prompt_id)
+    if not hist:
+        return
+    best_step, best = 0, None
+    for node_id, out in (hist.get("outputs") or {}).items():
+        for item in out.get("latents") or []:
+            # Chunk graphs name checkpoints <prefix>_step<N>; anything else
+            # is someone else's latent and is not ours to resume from.
+            m = re.search(r"_step(\d+)", item.get("filename", ""))
+            if m and int(m.group(1)) > best_step:
+                best_step, best = int(m.group(1)), item
+    if not best:
+        return
+    try:
+        data = await comfy.fetch(best["filename"], best.get("subfolder", ""),
+                                 best.get("type", "output"))
+        name = await comfy.upload_latent(data, f"photodump_j{job['id']}_step{best_step}.latent")
+    except Exception:
+        return   # best effort; without it the job simply restarts from zero
+    with db() as conn:
+        conn.execute("UPDATE jobs SET resume_latent=?, resume_step=? WHERE id=?",
+                     (name, best_step, job["id"]))
+
+
 def recover():
     """Requeue whatever was in flight when this process last stopped.
 
@@ -419,6 +558,12 @@ async def loop():
                 else:
                     await _run_reel(job)
                 _state["last_error"] = ""
+            except JobPaused:
+                _pause(job["id"])
+                _state["last_error"] = f"job {job['id']} paused"
+            except JobStopped:
+                _stop(job["id"])
+                _state["last_error"] = f"job {job['id']} stopped"
             except Exception as e:
                 _fail(job["id"], str(e))
                 _state["last_error"] = str(e)
@@ -447,6 +592,18 @@ async def loop():
         try:
             await _run(job)
             _state["last_error"] = ""
+        except JobPaused:
+            _pause(job["id"])
+            # The point of pausing is the card, not the queue: interrupting
+            # stops sampling but leaves the checkpoint resident in VRAM.
+            try:
+                await comfy.free()
+            except Exception:
+                pass
+            _state["last_error"] = f"job {job['id']} paused"
+        except JobStopped:
+            _stop(job["id"])
+            _state["last_error"] = f"job {job['id']} stopped"
         except comfy.ComfyOffline as e:
             # Not a failure. The PC went to sleep; requeue and wait it out.
             _release(job["id"], str(e))

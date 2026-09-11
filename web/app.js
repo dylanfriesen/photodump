@@ -252,11 +252,22 @@ async function pollStatus() {
   const state = body.current != null ? 'rendering' : body.online ? 'ready' : 'asleep';
   document.body.dataset.node = state;
   $('node-dot').innerHTML = DOT[state];
-  $('node-text').textContent = state === 'rendering'
-    ? `rendering job #${body.current} · ${body.queued} queued`
-    : state === 'ready'
-      ? `node ready · ${body.queued} queued`
-      : `ComfyUI unavailable · ${body.queued} queued · retrying`;
+  // Scheduled and paused work is not waiting on the node, so it is named
+  // separately - otherwise an idle node with five held jobs reads as stuck.
+  const extra = [
+    body.scheduled ? `${body.scheduled} scheduled` : '',
+    body.paused_jobs ? `${body.paused_jobs} paused` : '',
+  ].filter(Boolean).join(' · ');
+  const tail = `${body.queued} queued${extra ? ` · ${extra}` : ''}`;
+  $('node-text').textContent = body.queue_paused
+    ? `queue paused · ${tail}`
+    : state === 'rendering'
+      ? `rendering job #${body.current} · ${tail}`
+      : state === 'ready'
+        ? `node ready · ${tail}`
+        : `ComfyUI unavailable · ${tail} · retrying`;
+  const qp = $('queue-pause');
+  if (qp) qp.textContent = body.queue_paused ? 'resume queue' : 'pause queue';
   $('node-text').title = body.connection_error || '';
   renderProgress(body.progress);
 
@@ -944,11 +955,14 @@ async function refreshJobs() {
         ${failed
           ? `<div class="err">${esc(j.error)}</div>`
           : `<span class="prompt">${esc(j.prompt)}</span>`}
-        <span class="jmeta">${esc(kind)}${params.aspect ? ` · ${esc(params.aspect)}` : ''}${j.attempts > 1 ? ` · attempt ${j.attempts}` : ''}${
+        <span class="jmeta">${esc(kind)}${params.aspect ? ` · ${esc(params.aspect)}` : ''}${j.attempts > 1 ? ` · attempt ${j.attempts}` : ''}${j.not_before ? ` · scheduled ${esc(j.not_before)} UTC` : ''}${
           running ? `<span data-job-progress="${j.id}"> · ${esc(PROGRESS.stage)}${PROGRESS.steps ? ` ${PROGRESS.step}/${PROGRESS.steps}` : ''}</span>` : ''}</span>
       </div>
       <div class="act">
-        ${j.status === 'queued' ? `<button data-cancel="${j.id}">cancel</button>` : ''}
+        ${j.status === 'running' ? `<button data-pause="${j.id}">pause</button>` : ''}
+        ${j.status === 'queued' ? `<button data-pause="${j.id}">hold</button>` : ''}
+        ${j.status === 'paused' ? `<button data-resume="${j.id}" class="warn">resume</button>` : ''}
+        ${['running', 'queued', 'paused'].includes(j.status) ? `<button data-stop="${j.id}">stop</button>` : ''}
       </div>
       ${running ? `
       <div class="bar ${PROGRESS.estimated ? 'estimated' : ''}" data-bar="${j.id}" style="grid-column:2/-1" ${PROGRESS.percent == null ? 'hidden' : ''}>
@@ -963,10 +977,35 @@ async function refreshJobs() {
   }).join('') || '<p class="hint">Queue is empty.</p>';
 }
 
+// Queue-level pause. Distinct from pausing a job: whatever is already on the
+// GPU runs to completion, nothing new is dispatched after it.
+$('queue-pause').onclick = async () => {
+  const on = !NODE.queue_paused;
+  const { ok, body } = await api(`/api/queue/${on ? 'pause' : 'resume'}`, { method: 'POST' });
+  if (!ok) { toast(body.detail || 'Could not change the queue.', 'bad'); return; }
+  toast(on ? 'Queue paused - the current render will finish' : 'Queue resumed');
+  pollStatus.last = undefined;
+  refreshJobs();
+};
+
 $('jobs').onclick = async (e) => {
   const d = e.target.dataset;
   if (d.cancel) {
     await api(`/api/jobs/${d.cancel}`, { method: 'DELETE' });
+  } else if (d.pause) {
+    const { ok, body } = await api(`/api/jobs/${d.pause}/pause`, { method: 'POST' });
+    if (!ok) { toast(body.detail || 'Could not pause.', 'bad'); return; }
+    // A running job pauses at the node's next poll, not instantly. Saying so
+    // stops it looking broken for the couple of seconds in between.
+    toast(body.pending ? `Job #${d.pause} stopping at the node…` : `Job #${d.pause} held`);
+  } else if (d.resume) {
+    const { ok, body } = await api(`/api/jobs/${d.resume}/resume`, { method: 'POST' });
+    if (!ok) { toast(body.detail || 'Could not resume.', 'bad'); return; }
+    toast(`Job #${d.resume} back on the queue`);
+  } else if (d.stop) {
+    const { ok, body } = await api(`/api/jobs/${d.stop}/stop`, { method: 'POST' });
+    if (!ok) { toast(body.detail || 'Could not stop.', 'bad'); return; }
+    toast(`Job #${d.stop} stopped`, 'bad');
   } else if (d.requeue) {
     const { ok, body } = await api(`/api/jobs/${d.requeue}/requeue`, { method: 'POST' });
     if (!ok) { toast(body.detail || 'Could not requeue.', 'bad'); return; }

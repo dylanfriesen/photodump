@@ -76,6 +76,66 @@ async def available() -> dict:
     }
 
 
+async def interrupt():
+    """Abort whatever the node is sampling right now.
+
+    ComfyUI interrupts the *running* prompt only - anything already queued
+    behind it starts immediately after. We never queue more than one prompt,
+    so that distinction does not bite us, but it is why stop also has to mark
+    the job terminal in the database rather than trusting the node.
+
+    The sampler's latent is discarded on interrupt. Nothing is recoverable
+    from an interrupted prompt except checkpoints written before it.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"{COMFY_URL}/interrupt")
+    except Exception as e:
+        raise ComfyOffline(str(e)) from e
+
+
+async def free(unload_models: bool = True, free_memory: bool = True):
+    """Drop models from VRAM so the card is usable for something else.
+
+    This is the half of `pause` that matters: interrupting stops the render,
+    but ComfyUI keeps a 10-12GB checkpoint resident until told otherwise.
+    Failure here is not fatal - the render is already stopped - so callers
+    treat it as best effort.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            await c.post(f"{COMFY_URL}/free",
+                         json={"unload_models": unload_models, "free_memory": free_memory})
+    except Exception as e:
+        raise ComfyOffline(str(e)) from e
+
+
+async def upload_latent(data: bytes, name: str) -> str:
+    """Put a .latent file into the node's *input* directory.
+
+    SaveLatent writes to `output/`, LoadLatent enumerates `input/`, and
+    ComfyUI validates that enumeration - so a resume graph naming a file that
+    is not in `input/` is rejected at submit time with a 400, not at runtime.
+    Round-tripping a checkpoint through here is what makes resume possible.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.post(
+                f"{COMFY_URL}/upload/image",
+                files={"image": (name, data, "application/octet-stream")},
+                data={"type": "input", "overwrite": "true"},
+            )
+            r.raise_for_status()
+            body = r.json()
+    except httpx.HTTPStatusError as e:
+        raise ComfyError(f"latent upload rejected: {e}") from e
+    except Exception as e:
+        raise ComfyOffline(str(e)) from e
+    sub = body.get("subfolder") or ""
+    name = body.get("name", name)
+    return f"{sub}/{name}" if sub else name
+
+
 async def upload_image(path: Path) -> str:
     """Push a reference image to the node; returns the name to use in LoadImage."""
     try:

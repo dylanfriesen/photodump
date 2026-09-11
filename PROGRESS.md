@@ -14,6 +14,56 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-10
 
+**Pause, stop and scheduling; video resume investigated and not shipped**
+Three controls the queue never had. Stop interrupts the node and marks the job
+terminal. Pause interrupts *and* calls `/free` - that second half is the point,
+since interrupting stops sampling but leaves a 10-12GB checkpoint resident in
+VRAM, which is the whole reason to pause. Queue pause stops dispatch without
+touching the running job. Scheduling is a `not_before` compared in SQL.
+
+Two traps, both of which would have shipped silently:
+
+1. *Pause must not spend an attempt.* `_claim` does `attempts+1` and
+   `MAX_ATTEMPTS` is 5, so routing pause through `_release` fails a job
+   permanently on its fifth pause with "gave up after 5 attempts" - the exact
+   message that means "this graph is broken". `_pause` decrements instead, and
+   a smoke assertion now pins it.
+2. *`paused` had to be a real status, not a flag on `running`*, because
+   `recover()` requeues everything still marked running at startup. As a flag
+   it would have survived testing and un-paused every held job on the next
+   deploy.
+
+Pause and stop are requests written to a `control` column, not statuses written
+by the API: the worker owns `status` for the job it is rendering.
+
+**Video resume: verified the mechanism, found a blocker, did not ship it.**
+Job 27 took 787s to reach step 21 of 30, so restarting a paused video from zero
+is expensive and resume looked worth building. The save/load round trip does
+work, and it is not obvious: `SaveLatent` writes to `output/`, `LoadLatent`
+enumerates `input/`, and ComfyUI *validates that enumeration at submit time*,
+so the file must be round-tripped through `/upload/image` or the graph is
+rejected with a 400 before rendering. `comfy.upload_latent()` and
+`worker._checkpoint()` implement that half and are in the tree.
+
+What stops it: `Wan22ImageToVideoLatent` returns `noise_mask` alongside
+`samples`, and `SaveLatent` persists only `samples`. That mask pins the opening
+frames to the reference image. Resuming without it denoises already-clean
+frames as though they carried `sigma[N]` of noise, and the clip drifts off the
+source photograph - no error, just wrong output. `SetLatentNoiseMask` cannot
+rebuild it; it reshapes to 4-D and WAN's mask is 5-D over the temporal axis.
+
+**Cost:** roughly half the session went into a feature that did not ship. It was
+still the right order - the alternative was shipping a resume that silently
+degrades video, which is worse than not having resume. Written up in
+`VIDEO-RESUME.md` with both source files quoted, and it needs a decision: a
+small custom node on the desktop, or leave video resume out.
+
+Everything here was verified against the live ComfyUI (967 node classes) rather
+than from documentation, per the standing rule about exported graphs.
+
+36 smoke assertions, 12 unit tests. Not deployed.
+
+
 **SSH to the render node works; the blocker was a username**
 Three sessions had built kanto's half of remote access and stopped at the
 Windows step. It finally ran, and then failed at key auth with
@@ -193,3 +243,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `4b4a015` 2026-09-10 12:14 (dylan) — Add a working agreement both agents read
 - `20ed9fe` 2026-09-10 12:31 (dylan) — Fix six Create issues from Codex's review; deploy
 - `1f36098` 2026-09-10 12:51 (dylan) — Fix four findings from Codex's follow-up review
+- `f93b7ef` 2026-09-10 17:14 (dylan) — Record the SSH fix; retire the finished items in AT-THE-DESKTOP

@@ -3,6 +3,7 @@ import json
 import shutil
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -11,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import captions, comfy, deliver, preflight, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
-from .db import db, init, loads, rows
+from .db import db, init, loads, rows, set_setting
 from .prompts import (MODES, QUALITY, STARTERS, compile_negative, compile_parts,
                       compile_prompt)
 
@@ -262,6 +263,117 @@ async def api_cancel(job_id: int):
     with db() as conn:
         conn.execute("UPDATE jobs SET status='cancelled' WHERE id=? AND status='queued'", (job_id,))
     return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/pause")
+async def api_pause(job_id: int):
+    """Pause a job. Running jobs stop at the node; queued ones just park.
+
+    A running job is not paused here - `control` is a request the worker picks
+    up on its next poll. The worker owns `status` for whatever it is
+    rendering, and writing that status from here would race it.
+    """
+    with db() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such job")
+        if row["status"] == "running":
+            conn.execute("UPDATE jobs SET control='pause' WHERE id=?", (job_id,))
+            return {"ok": True, "pending": True}
+        if row["status"] == "queued":
+            conn.execute("UPDATE jobs SET status='paused' WHERE id=?", (job_id,))
+            return {"ok": True, "pending": False}
+        raise HTTPException(400, f"cannot pause a {row['status']} job")
+
+
+@app.post("/api/jobs/{job_id}/stop")
+async def api_stop(job_id: int):
+    """Cancel a job outright. Terminal - resume will not bring it back."""
+    with db() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such job")
+        if row["status"] == "running":
+            conn.execute("UPDATE jobs SET control='stop' WHERE id=?", (job_id,))
+            return {"ok": True, "pending": True}
+        if row["status"] in ("queued", "paused"):
+            conn.execute(
+                "UPDATE jobs SET status='cancelled', finished_at=datetime('now'), "
+                "prompt_id='', resume_latent='', resume_step=0 WHERE id=?",
+                (job_id,),
+            )
+            return {"ok": True, "pending": False}
+        raise HTTPException(400, f"cannot stop a {row['status']} job")
+
+
+@app.post("/api/jobs/{job_id}/resume")
+async def api_resume(job_id: int):
+    """Return a paused job to the queue.
+
+    `attempts` is left alone: pause already gave back the attempt it consumed,
+    so resuming does not need to reset the ceiling the way requeue does.
+    Clearing not_before makes resume mean "now" even for a job that was
+    scheduled - otherwise resuming a scheduled job appears to do nothing.
+    """
+    with db() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such job")
+        if row["status"] != "paused":
+            raise HTTPException(400, f"cannot resume a {row['status']} job")
+        conn.execute(
+            "UPDATE jobs SET status='queued', not_before=NULL, error='' WHERE id=?",
+            (job_id,),
+        )
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/schedule")
+async def api_schedule(job_id: int, payload: dict):
+    """Hold a job until a UTC timestamp. `not_before: null` clears the hold.
+
+    Stored as a string compared in SQL against datetime('now'), so it must be
+    'YYYY-MM-DD HH:MM:SS' in UTC like every other timestamp in this schema. A
+    local-time value here silently runs the job at the wrong hour, so it is
+    parsed and normalised rather than trusted.
+    """
+    raw = payload.get("not_before")
+    when = None
+    if raw not in (None, ""):
+        text = str(raw).strip().replace("T", " ").replace("Z", "")
+        try:
+            when = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                when = datetime.strptime(text[:16], "%Y-%m-%d %H:%M")
+            except ValueError:
+                raise HTTPException(400, "not_before must be UTC 'YYYY-MM-DD HH:MM[:SS]'")
+    with db() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such job")
+        if row["status"] not in ("queued", "paused"):
+            raise HTTPException(400, f"cannot schedule a {row['status']} job")
+        conn.execute(
+            "UPDATE jobs SET not_before=?, status='queued' WHERE id=?",
+            (when.strftime("%Y-%m-%d %H:%M:%S") if when else None, job_id),
+        )
+    return {"ok": True, "not_before": when.strftime("%Y-%m-%d %H:%M:%S") if when else None}
+
+
+@app.post("/api/queue/pause")
+async def api_queue_pause():
+    """Stop dispatching new jobs. Whatever is rendering runs to completion."""
+    with db() as conn:
+        set_setting(conn, "queue_paused", "1")
+    return {"ok": True, "queue_paused": True}
+
+
+@app.post("/api/queue/resume")
+async def api_queue_resume():
+    with db() as conn:
+        set_setting(conn, "queue_paused", "")
+    return {"ok": True, "queue_paused": False}
 
 
 @app.post("/api/jobs/{job_id}/requeue")
