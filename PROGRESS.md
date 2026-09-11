@@ -14,6 +14,36 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-10
 
+**Gallery masonry never recomputed on resize**
+Reported as "the whole gallery does not scale". `#grid` is a 1px-row masonry:
+each tile's height is a `grid-row-end: span N` in pixels, computed by
+`sizeTile()` from `fig.clientWidth`. It ran **once**, on image load, and there
+was no resize handling anywhere - so any change in column width left every tile
+claiming its old height. The images rescale with `width:100%`; the rows they
+occupy do not. Tiles overlap or float in gaps.
+
+Worst at the 900px breakpoint, where the grid goes three columns to two *and*
+the sidebar collapses, so the column width changes twice over in one step.
+
+Fixed by remembering each tile's aspect ratio on the element and recomputing
+the span from it, driven by a `ResizeObserver` on `#grid`. Storing the ratio
+means a relayout needs no image reload; observing the grid also catches the
+gallery tab becoming visible, when tiles that previously measured 0 wide
+finally have a width. The write is skipped when the span is unchanged, because
+writing one can move the scrollbar, which resizes the grid, which would call
+straight back in.
+
+**Worth recording:** this was blamed on the pause/stop work in the same session
+and was not - that commit touched job rows and the status line, and the running
+container was still serving pre-change assets. Checking what the server
+actually served settled it in one command, before any code was read.
+
+Also guarded `$('queue-pause').onclick` from the same session: an unguarded
+handler on a missing element throws at load and kills every handler defined
+after it, which presents as most of the UI being dead rather than one broken
+button.
+
+
 **Pause, stop and scheduling; video resume investigated and not shipped**
 Three controls the queue never had. Stop interrupts the node and marks the job
 terminal. Pause interrupts *and* calls `/free` - that second half is the point,
@@ -244,3 +274,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `20ed9fe` 2026-09-10 12:31 (dylan) — Fix six Create issues from Codex's review; deploy
 - `1f36098` 2026-09-10 12:51 (dylan) — Fix four findings from Codex's follow-up review
 - `f93b7ef` 2026-09-10 17:14 (dylan) — Record the SSH fix; retire the finished items in AT-THE-DESKTOP
+- `ad0ec5e` 2026-09-10 17:59 (dylan) — Add pause, stop and scheduling to the queue

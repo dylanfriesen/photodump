@@ -731,7 +731,28 @@ function tileMarkup(i) {
     </figure>`;
 }
 
-/* Masonry: #grid uses 1px rows, so each tile spans its own measured height. */
+/* Masonry: #grid uses 1px rows, so each tile spans its own measured height.
+
+   The span is a pixel count, so it is only correct for the column width it
+   was measured at. Column width changes on every window resize and at the
+   1180px and 900px breakpoints, where the grid drops from four columns to
+   three to two - so a span computed once, at image load, leaves every tile
+   claiming its old height. That reads as tiles overlapping or floating in
+   gaps: the images rescale (width:100%) but the rows they sit in do not.
+
+   So the aspect ratio is remembered on the element and the span recomputed
+   from it, which needs no reload and works for tiles already on screen. */
+function layoutTile(fig) {
+  const ratio = parseFloat(fig.dataset.ratio || '');
+  if (!ratio) return;
+  const colW = fig.clientWidth;
+  if (!colW) return;                   // hidden tab: measuring now would give 0
+  const span = `span ${Math.ceil(colW * ratio) + 32}`;
+  // Only write when it actually changes. A write can shift the scrollbar,
+  // which resizes the grid, which would call us straight back.
+  if (fig.style.gridRowEnd !== span) fig.style.gridRowEnd = span;
+}
+
 function sizeTile(fig) {
   const media = fig.querySelector('img, video');
   if (!media) return;
@@ -739,8 +760,8 @@ function sizeTile(fig) {
     const w = media.naturalWidth || media.videoWidth;
     const h = media.naturalHeight || media.videoHeight;
     if (!w || !h) return;
-    const colW = fig.clientWidth || 200;
-    fig.style.gridRowEnd = `span ${Math.ceil(colW * (h / w)) + 32}`;
+    fig.dataset.ratio = h / w;
+    layoutTile(fig);
   };
   if (media.tagName === 'IMG') {
     media.complete ? apply() : media.addEventListener('load', apply, { once: true });
@@ -748,6 +769,20 @@ function sizeTile(fig) {
     media.addEventListener('loadedmetadata', apply, { once: true });
   }
 }
+
+let relayoutPending = false;
+function relayoutGrid() {
+  if (relayoutPending) return;
+  relayoutPending = true;
+  requestAnimationFrame(() => {
+    relayoutPending = false;
+    [...$('grid').children].forEach(layoutTile);
+  });
+}
+
+// Covers resize, zoom, breakpoint crossings, and the gallery tab becoming
+// visible - at which point tiles that measured 0 wide finally have a width.
+new ResizeObserver(relayoutGrid).observe($('grid'));
 
 function asTile(i) {
   return { ...i, key: `image:${i.id}`, src: 'image', thumb: `/thumbs/${i.filename}.jpg` };
@@ -979,7 +1014,10 @@ async function refreshJobs() {
 
 // Queue-level pause. Distinct from pausing a job: whatever is already on the
 // GPU runs to completion, nothing new is dispatched after it.
-$('queue-pause').onclick = async () => {
+// Guarded: a cached index.html served alongside a fresh app.js would leave
+// this element missing, and an unguarded throw here kills every handler
+// defined after it - the whole page, not just this button.
+if ($('queue-pause')) $('queue-pause').onclick = async () => {
   const on = !NODE.queue_paused;
   const { ok, body } = await api(`/api/queue/${on ? 'pause' : 'resume'}`, { method: 'POST' });
   if (!ok) { toast(body.detail || 'Could not change the queue.', 'bad'); return; }
