@@ -18,7 +18,28 @@ from .db import db, loads, setting
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 
-POLL_IDLE = 20     # nothing to do / node asleep
+POLL_IDLE = 20     # heartbeat when there is nothing to do
+
+# Queueing a job used to leave it sitting for up to POLL_IDLE before the worker
+# looked - measured at 19-20s, which made a 10s render feel like a 30s one.
+# Enqueuing now signals this, so pickup is immediate while the heartbeat still
+# refreshes node status on its own.
+_woken = asyncio.Event()
+
+
+def wake():
+    """Tell the worker a job is waiting. Safe to call from any coroutine."""
+    _woken.set()
+
+
+async def _idle_wait(seconds: float = POLL_IDLE):
+    """Sleep, but return early if something is enqueued."""
+    try:
+        await asyncio.wait_for(_woken.wait(), timeout=seconds)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        _woken.clear()
 POLL_ACTIVE = 2    # a render is in flight
 MAX_ATTEMPTS = 5   # requeue ceiling; see _release
 
@@ -577,13 +598,13 @@ async def loop():
         _state["connection_error"] = h.get("error", "")
         if not h["online"]:
             _state["current"] = None
-            await asyncio.sleep(POLL_IDLE)
+            await _idle_wait()
             continue
 
         job = await _claim()
         if not job:
             _state["current"] = None
-            await asyncio.sleep(POLL_IDLE)
+            await _idle_wait()
             continue
 
         _state["current"] = job["id"]
@@ -611,7 +632,7 @@ async def loop():
             _state["last_error"] = f"node went away: {e}"
             _state["current"] = None
             progress.done()
-            await asyncio.sleep(POLL_IDLE)
+            await _idle_wait()
         except Exception as e:
             _fail(job["id"], str(e))
             _state["last_error"] = str(e)

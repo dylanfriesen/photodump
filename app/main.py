@@ -191,6 +191,7 @@ async def api_generate(payload: dict):
                  payload.get("src_image_id")),
             )
             ids.append(cur.lastrowid)
+    worker.wake()
     return {"queued": ids, "node": worker.status()}
 
 
@@ -224,6 +225,7 @@ async def api_reel(payload: dict):
             "INSERT INTO jobs (prompt, negative, params) VALUES (?,?,?)",
             (f"reel from {len(ids)} stills", "", json.dumps(params)),
         )
+    worker.wake()
     return {"queued": [cur.lastrowid], "shot_seconds": round(shot, 3),
             "total_seconds": round(reels.total_seconds(shot, len(ids), params["transition"]), 2)}
 
@@ -246,6 +248,7 @@ async def api_deliver(image_id: int, payload: dict):
         cur = conn.execute(
             "INSERT INTO jobs (prompt, negative, params) VALUES (?,?,?)",
             (f"instagram {target} encode of #{image_id}", "", json.dumps(params)))
+    worker.wake()
     return {"queued": [cur.lastrowid], "target": target,
             "size": deliver.TARGETS[target]}
 
@@ -325,6 +328,7 @@ async def api_resume(job_id: int):
             "UPDATE jobs SET status='queued', not_before=NULL, error='' WHERE id=?",
             (job_id,),
         )
+    worker.wake()
     return {"ok": True}
 
 

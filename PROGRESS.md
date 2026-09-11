@@ -12,6 +12,47 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ---
 
+## 2026-09-11
+
+**Benchmarked the render node, and fixed a 20-second dead wait it exposed**
+First real performance measurements now that ComfyUI is reachable.
+
+Pure sampler time at 832x1216, measured from ComfyUI's own execution
+timestamps rather than wall clock:
+
+| steps | seconds |
+|---|---|
+| 15 | 6.6 |
+| 20 | 7.8 |
+| 25 | 9.1 |
+| 30 | 10.3 |
+| 40 | 12.7 |
+| 50 | 15.2 |
+
+Linear: roughly **2.9s fixed + 0.25s per step**. Resolution barely matters —
+square, portrait, landscape and story all land within 0.3s of each other at 30
+steps, because every SDXL bucket is about one megapixel. First render after a
+cold start costs ~27s while the checkpoint loads into VRAM.
+
+**The fix:** end-to-end through the app took 30.7s for a single 10.3s render.
+The worker's idle poll was 20s, so a freshly queued job sat untouched for
+19-20s (measured three times: 18.9, 20.1, 19.5). Enqueueing now sets an
+`asyncio.Event` the worker waits on, so pickup is immediate while the 20s
+heartbeat still refreshes node status.
+
+Pickup **19.5s -> 0.3s**. One image end-to-end **30.7s -> 13.6s**; four
+**73.7s -> 52.3s**. Remaining overhead is the 2s completion-poll granularity
+plus fetch, thumbnail and DB write — about 2.8s per image.
+
+**Cost:** nothing wasted; the benchmark was the thing that found it. Worth
+noting the bug was invisible without measuring, since every individual piece
+behaved correctly.
+
+**Also measured:** IP-Adapter roughly doubles a render (19-27s vs 10s), and one
+WAN video clip took **1237s — 20.6 minutes**.
+
+36 smoke assertions and 12 unit tests pass. Deployed.
+
 ## 2026-09-10
 
 **Gallery masonry never recomputed on resize**
@@ -275,3 +316,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `1f36098` 2026-09-10 12:51 (dylan) — Fix four findings from Codex's follow-up review
 - `f93b7ef` 2026-09-10 17:14 (dylan) — Record the SSH fix; retire the finished items in AT-THE-DESKTOP
 - `ad0ec5e` 2026-09-10 17:59 (dylan) — Add pause, stop and scheduling to the queue
+- `6148509` 2026-09-10 18:33 (dylan) — Recompute gallery tile heights when the grid resizes
