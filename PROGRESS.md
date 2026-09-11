@@ -435,3 +435,4 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `0f4f12a` 2026-09-11 08:30 (dylan) — Wake the worker on enqueue instead of waiting out the idle poll
 - `c5b1764` 2026-09-11 13:38 (dylan) — Wire LTX-2.5 into the video backend; batch render emails per request
 - `4c7a330` 2026-09-11 13:42 (dylan) — Add a hires-fix pass; correct two false 'missing model' findings
+- `71bb641` 2026-09-11 14:26 (dylan) — Solve style matching with a chained two-pass img2img

@@ -74,6 +74,13 @@ nobody notices.
   `python -m unittest tools.test_mailer tools.test_progress`, run with `tools/`
   mounted since the image does not ship it.
 
+## Recipes
+
+**`RECIPES.md` holds proven parameter sets**, with the reasoning behind each
+number. Read it before tuning generation quality — the values there were
+established by sweeps, and the "what does not work" notes record approaches
+already tried and ruled out. Add to it when a sweep settles something.
+
 ## Current status
 
 `COMPLETION-NOTES.md` is the live handoff. `AT-THE-DESKTOP.md` lists what needs

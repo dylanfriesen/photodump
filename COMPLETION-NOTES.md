@@ -1,3 +1,22 @@
+# Photodump continuation — September 11, 2026
+
+**Start here: `RECIPES.md`.** Image quality was the open problem for three
+sessions and it is now solved — matching a reference's art style is a **two-pass
+img2img chain** (denoise 0.45, then 0.65 from pass 1's own output), shipped as a
+*style match* checkbox in Create. `RECIPES.md` has the exact parameters, the
+sweep results behind each number, and the approaches already ruled out
+(prompt tags, IP-Adapter, a hires pass) so they are not retried.
+
+Open on images: garbled lettering inherited from reference text regions, plain
+backgrounds, and a ~680x850 cap because **zero upscale models and zero LoRAs are
+installed**. Video is parked at Dylan's request; the LTX second pass committed
+in 71bb641 is **unverified** — its one test render finished implausibly fast.
+
+Codex (`gpt-6-astra`) was mid-run on the remaining image defects when this
+session ended; check `PROGRESS.md` and `RECIPES.md` for anything it landed.
+
+---
+
 # Photodump continuation — September 9, 2026
 
 Claude stopped at its usage limit after implementing the first progress and
