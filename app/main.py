@@ -159,6 +159,10 @@ async def api_generate(payload: dict):
         "extend_anchor": payload.get("extend_anchor", "center"),
         "video_size": payload.get("video_size", "story"),
         "video_backend": payload.get("video_backend"),   # wan | ltx
+        "hires": bool(payload.get("hires")),
+        "hires_scale": float(payload.get("hires_scale", 1.5)),
+        "hires_steps": int(payload.get("hires_steps", 20)),
+        "hires_denoise": float(payload.get("hires_denoise", 0.45)),
         "seconds": float(payload.get("seconds", 3)),
         "fps": int(payload.get("fps", 16)),
         # Kept so a caption can be drafted from what this image actually is,

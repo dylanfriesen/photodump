@@ -197,6 +197,11 @@ def build(prompt: str, negative: str, params: dict,
         mode = "ipadapter_multi"
     if mode in ("img2img", "ipadapter", "ipadapter_multi", "outpaint", "wan_i2v") and not ref_name:
         mode = "txt2img"
+    # Hires fix: render at the trained resolution, upscale the latent, then run
+    # a second low-denoise pass that invents detail at the larger size rather
+    # than interpolating it. Only meaningful for the reference-free path.
+    if mode == "txt2img" and params.get("hires"):
+        mode = "txt2img_hires"
 
     if mode == "wan_i2v":
         return _build_video(prompt, negative, params, ref_name)
@@ -231,6 +236,17 @@ def build(prompt: str, negative: str, params: dict,
         w, h = ASPECTS.get(params.get("aspect", "portrait"), ASPECTS["portrait"])
         wf["5"]["inputs"]["width"] = w
         wf["5"]["inputs"]["height"] = h
+        if mode == "txt2img_hires":
+            scale = float(params.get("hires_scale", 1.5))
+            # multiples of 8 keep the VAE happy
+            wf["30"]["inputs"]["width"] = int(w * scale) // 8 * 8
+            wf["30"]["inputs"]["height"] = int(h * scale) // 8 * 8
+            second = wf["31"]["inputs"]
+            second["seed"] = seed
+            second["cfg"] = float(params.get("cfg", 5.0))
+            second["steps"] = int(params.get("hires_steps", 20))
+            # Low enough to keep the composition, high enough to add detail.
+            second["denoise"] = float(params.get("hires_denoise", 0.45))
         if mode in ("ipadapter", "ipadapter_multi"):
             wf["13"]["inputs"]["weight"] = float(params.get("ip_weight", 0.7))
             # "linear" carries the reference's content and palette as well as

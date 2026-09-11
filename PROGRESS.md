@@ -14,6 +14,37 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-11
 
+**Hires fix, and two probe errors corrected**
+
+Added a two-pass detail path: render at the checkpoint's trained resolution,
+upscale the latent 1.5x, then re-sample at denoise 0.45 so the second pass
+*invents* detail at the larger size instead of interpolating it. 832x1216 ->
+1248x1824, all core nodes, nothing to install. Off by default; `hires: true`
+on `/api/generate`.
+
+**Two things I had reported as missing were present.** `LatentUpscaleModelLoader`
+uses a newer schema - `["COMBO", {"options": [...]}]` rather than `[[...]]` -
+and my probe rendered that as a bare `COMBO`, which I read as "no models". The
+LTX spatial upscaler was installed the whole time. Any future check of installed
+models must handle both schema shapes; a re-probe of every loader is in the
+session notes.
+
+Also deleted `gemma4-12b-with-proj-ltx-2.5-Q5_K_M.gguf` from the node: 148
+bytes, containing the literal text *"Access to model elix3r/... is restricted.
+You must have access to it and be authenticated"*. A download made without a
+token, with the error body saved as the model. It appeared in ComfyUI's dropdown
+as a valid choice.
+
+**Genuinely absent and worth knowing:** zero LoRAs and zero upscale models
+installed. Hires fix needs neither. A style LoRA remains the strongest lever for
+matching a specific look, and is the "training" answer - but choosing one is a
+taste decision.
+
+**Cost:** the earlier "run one LTX generation yourself" ask was wrong twice
+over - the user does not use ComfyUI directly, and the bundled blueprint could
+not have run anyway.
+
+
 **LTX-2.5 runs, driven end to end from kanto**
 It had never run. The `LTXV*` progress handling written earlier was written
 ahead of the fact, not from observation - ComfyUI's history held zero LTX
@@ -353,3 +384,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `ad0ec5e` 2026-09-10 17:59 (dylan) — Add pause, stop and scheduling to the queue
 - `6148509` 2026-09-10 18:33 (dylan) — Recompute gallery tile heights when the grid resizes
 - `0f4f12a` 2026-09-11 08:30 (dylan) — Wake the worker on enqueue instead of waiting out the idle poll
+- `c5b1764` 2026-09-11 13:38 (dylan) — Wire LTX-2.5 into the video backend; batch render emails per request
