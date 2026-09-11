@@ -97,11 +97,17 @@ LTX_CLIP = os.getenv("LTX_CLIP",
                      "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors")
 LTX_VAE = os.getenv("LTX_VAE", "ltx-2.5-video-vae-bf16.safetensors")
 LTX_AUDIO_VAE = os.getenv("LTX_AUDIO_VAE", "ltx-2.5-audio-vae-bf16.safetensors")
+LTX_UPSCALER = os.getenv(
+    "LTX_UPSCALER", "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors")
 
 # Output buckets for the Animate task. The 540-class entries exist because a
 # 16GB card running a GGUF quant is far happier there than at 720p, and an
 # upscale pass afterwards is cheap.
 VIDEO_SIZES = {
+    # LTX renders this in two passes: 544x960 first, upsampled 2x. 544x960 is
+    # the size the 16GB card is known to hold, so this is the largest 9:16
+    # output that reliably fits.
+    "story_hd": (1088, 1920),  # 9:16, full Instagram resolution
     "story": (704, 1280),      # 9:16 reels
     "story_540": (544, 960),   # 9:16, the size AMD reports as workable
     "portrait": (704, 896),    # 4:5 feed

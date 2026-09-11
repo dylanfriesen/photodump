@@ -375,6 +375,55 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 
 ---
 
+## 2026-09-11 — style matching solved: two-pass img2img
+
+**Why.** Four rounds of prompt engineering failed to make the renders match the
+reference's late-80s/90s cel aesthetic. The checkpoint (`waiNSFWIllustrious_v14`,
+the only one installed) renders glossy modern anime and tags cannot talk it out
+of it. IP-Adapter at 0.45 pulled the reference's *background* colour into the
+hair; at 0.85 it pulled in unrelated hair colour and texture. A hires pass added
+resolution but not style.
+
+**What worked.** img2img directly off the style reference — the "remake this
+photo" operation, which had been ruled out early because multiple references
+cannot use it and then never revisited for the single-reference case.
+
+The recipe is two passes, and both are necessary:
+
+- **Pass 1 — denoise 0.45, steps 40.** Reproduces the reference's rendering
+  technique faithfully. A denoise sweep settled this: 0.45 nails it, 0.55 is
+  weaker, 0.65 has already drifted back to the checkpoint's own look.
+- **Pass 2 — denoise 0.65 from pass 1's own output.** Pass 1 inherits the
+  reference's *colours* along with its style; Cynthia (platinum blonde) came out
+  with the reference's dark hair. Negative-prompting the dark hair away at 0.45
+  produced *green* hair rather than blonde, because the latent's hair region
+  keeps its luminance and blonde needs high luminance. Raising denoise far
+  enough to fix that loses the style. Pass 2 escapes the bind: the retro style
+  is native to pass 1's output, so a higher denoise corrects colour without
+  undoing it.
+
+**What it cost.** Three wasted rounds on prompt tags and IP-Adapter weights
+before trying the obvious tool. The green-hair detour was the useful failure —
+it showed the constraint is luminance in the source latent, not prompt strength,
+which is what pointed at chaining a second pass instead of tuning the first.
+
+**Shipped as a feature**, not a recipe to retype: `second_pass` /
+`second_pass_denoise` params, a *style match* checkbox in Create, and
+`worker._queue_second_pass`, which enqueues pass 2 from pass 1's output when
+pass 1 finishes. Chained render verified end-to-end (job 69 -> job 70).
+
+**Also in this commit, and NOT verified:** a second LTX pass (graph nodes 24-30,
+`LatentUpscaleModelLoader` -> `LTXVLatentUpsampler` -> re-concat audio ->
+`SamplerCustomAdvanced`) plus a `story_hd` 1088x1920 size, because the installed
+spatial upscaler was going unused and video was capped at 544x960. The one test
+render reported `done` in ~2 minutes, which is far too fast for a two-pass
+1088x1920 render — treat the output as suspect until someone looks at the file.
+Video work is parked at Dylan's request.
+
+**Still open on images:** garbled fake lettering inherited from the reference's
+text regions (much reduced in job 70 but not gone), plain backgrounds, and
+~680x850 output with no upscale model installed.
+
 ## Log
 - `eff568c` 2026-09-10 12:13 (dylan) — Add PROGRESS.md and a post-commit hook that maintains it
 - `4b4a015` 2026-09-10 12:14 (dylan) — Add a working agreement both agents read
@@ -385,3 +434,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `6148509` 2026-09-10 18:33 (dylan) — Recompute gallery tile heights when the grid resizes
 - `0f4f12a` 2026-09-11 08:30 (dylan) — Wake the worker on enqueue instead of waiting out the idle poll
 - `c5b1764` 2026-09-11 13:38 (dylan) — Wire LTX-2.5 into the video backend; batch render emails per request
+- `4c7a330` 2026-09-11 13:42 (dylan) — Add a hires-fix pass; correct two false 'missing model' findings

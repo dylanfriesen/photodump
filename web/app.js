@@ -609,6 +609,7 @@ function syncCreate() {
   // img2img strength is denoise; IP-Adapter strength is ip_weight.
   $('cr-ipweight-wrap').hidden = !styleMode;
   $('cr-denoise-wrap').hidden = styleMode;
+  $('cr-stylematch-wrap').hidden = styleMode;
   $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
 
   const warn = [];
@@ -666,7 +667,12 @@ function createValues() {
     body.ref_ids = CR_REFS;
     body.workflow = mode;               // send what we resolved, not what was typed
     if (mode.startsWith('ipadapter')) body.ip_weight = +$('cr-ipweight').value;
-    else body.denoise = +$('cr-denoise').value;
+    else {
+      body.denoise = +$('cr-denoise').value;
+      // Pass 1 must stay low or it re-renders in the checkpoint's own style
+      // instead of the reference's; pass 2 is where colour gets corrected.
+      body.second_pass = $('cr-stylematch').checked;
+    }
   }
   return body;
 }
@@ -680,7 +686,8 @@ $('btn-cr-preview').onclick = () => {
   el.textContent = `+ ${pos}\n\n- ${v.negative || '(defaults)'}` +
     (CR_REFS.length
       ? `\n\n${CR_REFS.length} reference(s) via ${v.workflow} at ` +
-        (v.ip_weight !== undefined ? `weight ${v.ip_weight}` : `denoise ${v.denoise}`)
+        (v.ip_weight !== undefined ? `weight ${v.ip_weight}` : `denoise ${v.denoise}`) +
+        (v.second_pass ? ' + a 2nd colour-correcting pass' : '')
       : '');
 };
 

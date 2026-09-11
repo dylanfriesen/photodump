@@ -276,6 +276,37 @@ async def _run_deliver(job: dict):
                      "params=? WHERE id=?", (json.dumps(params), job["id"]))
 
 
+def _queue_second_pass(conn, job: dict, params: dict) -> None:
+    """Style-match pass 2.
+
+    Pass 1 is img2img off a style reference at low denoise: it reproduces the
+    reference's rendering technique, but also inherits its colours - a blonde
+    character comes out with the reference's dark hair, and pushing denoise
+    high enough to fix that loses the style again.
+
+    Pass 2 re-renders from pass 1's own output. The style is native to that
+    image, so a higher denoise can correct colour without undoing it.
+    """
+    if not params.get("second_pass"):
+        return
+    img = conn.execute(
+        "SELECT id FROM images WHERE job_id=? ORDER BY id DESC LIMIT 1", (job["id"],)
+    ).fetchone()
+    if not img:
+        return
+    nxt = dict(params)
+    nxt.pop("second_pass")
+    nxt["workflow"] = "img2img"
+    nxt["denoise"] = float(params.get("second_pass_denoise", 0.65))
+    conn.execute(
+        "INSERT INTO jobs (prompt, negative, params, src_image_id, batch_id, status) "
+        "VALUES (?,?,?,?,?, 'queued')",
+        (job["prompt"], job["negative"], json.dumps(nxt),
+         img["id"], job["batch_id"]),
+    )
+    wake()
+
+
 async def _run(job: dict):
     previous = job.get("prompt_id")
     if previous:
@@ -297,7 +328,7 @@ async def _run(job: dict):
     ref_name = None
 
     # Animating a previously generated image: the source lives in OUT, not REFS.
-    if params.get("workflow") == "wan_i2v" and job["src_image_id"]:
+    if job["src_image_id"] and params.get("workflow") in ("wan_i2v", "img2img"):
         with db() as conn:
             img = conn.execute("SELECT * FROM images WHERE id=?", (job["src_image_id"],)).fetchone()
         if not img:
@@ -499,6 +530,7 @@ async def _await_outputs(prompt_id: str, job: dict, seed: int):
                     "UPDATE jobs SET status='done', finished_at=datetime('now') WHERE id=?",
                     (job["id"],),
                 )
+                _queue_second_pass(conn, job, loads(job["params"]))
             # WebSocket teardown can wait for a close handshake. The render
             # is already saved, so stop showing it as active before that wait.
             _state["current"] = None

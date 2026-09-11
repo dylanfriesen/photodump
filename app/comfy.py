@@ -15,7 +15,7 @@ import websockets
 
 from .config import (COMFY_HOST, COMFY_PORT, COMFY_URL, CHECKPOINT, ASPECTS,
                      VIDEO_SIZES, VIDEO_BACKEND, WAN_UNET, WAN_CLIP, WAN_VAE,
-                     LTX_UNET, LTX_CLIP, LTX_VAE, LTX_AUDIO_VAE)
+                     LTX_UNET, LTX_CLIP, LTX_VAE, LTX_AUDIO_VAE, LTX_UPSCALER)
 
 WORKFLOWS = Path(__file__).parent / "workflows"
 
@@ -291,18 +291,20 @@ VIDEO_BACKENDS = {
         "models": {"1": ("unet_name", LTX_UNET),
                    "2": ("clip_name", LTX_CLIP),
                    "3": ("vae_name", LTX_VAE),
-                   "4": ("vae_name", LTX_AUDIO_VAE)},
+                   "4": ("vae_name", LTX_AUDIO_VAE),
+                   "24": ("model_name", LTX_UPSCALER)},
         "image": "5",
         "latent": "7",           # EmptyLTXVLatentVideo
         "audio_latent": "9",     # frames_number must track the video length
         # SamplerCustomAdvanced carries no seed/steps/cfg: the schedule lives in
         # ManualSigmas and the seed in RandomNoise, so they are named here
         # rather than assumed to sit on the sampler node.
-        "seed_node": "17",
+        "seed_nodes": ["17", "28"],
         "sampler": None,
         "fps_nodes": {"13": "frame_rate", "22": "fps"},
         "text_nodes": ("11", "12"),
         "frame_multiple": 8,     # LTX wants 8n+1 frames
+        "latent_divisor": 2,     # nodes 24-30 upsample 2x after the first pass
         "defaults": {},
     },
     # Note: ComfyUI's bundled LTX blueprint cannot run here as shipped. It loads
@@ -345,12 +347,19 @@ def _build_video(prompt: str, negative: str, params: dict, ref_name: str) -> tup
     if m:
         # e.g. WAN wants 4n+1; anything else silently degrades the last chunk.
         length = max(m * 4 + 1, length - (length - 1) % m)
+    if spec.get("latent_divisor"):
+        # A second pass upsamples 2x, so the first pass must start at half the
+        # requested size or the refine step OOMs and the output is oversized.
+        d = spec["latent_divisor"]
+        w, h = (w // d) - (w // d) % 32, (h // d) - (h // d) % 32
     wf[spec["latent"]]["inputs"].update({"width": w, "height": h, "length": length})
 
     if spec.get("audio_latent"):
         wf[spec["audio_latent"]]["inputs"]["frames_number"] = length
-    if spec.get("seed_node"):
-        wf[spec["seed_node"]]["inputs"]["noise_seed"] = seed
+    for i, node in enumerate(spec.get("seed_nodes", [])):
+        # Each RandomNoise gets its own seed, derived so one `seed` param still
+        # makes the whole render reproducible.
+        wf[node]["inputs"]["noise_seed"] = (seed + i) % (2**31 - 1)
     if spec.get("sampler"):
         k = wf[spec["sampler"]]["inputs"]
         d = spec["defaults"]

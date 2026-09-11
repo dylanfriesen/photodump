@@ -159,6 +159,11 @@ async def api_generate(payload: dict):
         "extend_anchor": payload.get("extend_anchor", "center"),
         "video_size": payload.get("video_size", "story"),
         "video_backend": payload.get("video_backend"),   # wan | ltx
+        # Style match: pass 1 copies a reference's rendering technique at low
+        # denoise, pass 2 re-renders from that output at higher denoise to fix
+        # the colours pass 1 inherits along with the style. See _queue_second_pass.
+        "second_pass": bool(payload.get("second_pass")),
+        "second_pass_denoise": float(payload.get("second_pass_denoise", 0.65)),
         "hires": bool(payload.get("hires")),
         "hires_scale": float(payload.get("hires_scale", 1.5)),
         "hires_steps": int(payload.get("hires_steps", 20)),
