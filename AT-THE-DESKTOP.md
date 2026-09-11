@@ -1,44 +1,15 @@
 # Do these at the desktop
 
-Three things, in order. The first two get rendering working again; the third
-means you never have to do this again.
+**One thing left, and it can only be done at the machine** — it needs the
+ComfyUI GUI, so SSH does not help. Everything else on this list is done; see
+*Already handled* at the bottom for what changed and when.
 
-Everything else — the queue, reels, the Instagram encode, captions, email —
-already works on kanto and needs nothing from you.
-
----
-
-## 1. Start ComfyUI so kanto can see it
-
-ComfyUI binds to localhost by default. It will look perfectly fine on the
-desktop and be completely invisible to kanto, which is the failure we keep
-hitting.
-
-Launch it with:
-
-```
---listen 0.0.0.0 --port 8188
-```
-
-In **ComfyUI Desktop**: Settings → Server → extra launch arguments.
-If you launch from a `.bat`, add the flags to the `python main.py` line.
-
-Check it took, **on the desktop**:
-
-```powershell
-Get-NetTCPConnection -State Listen -LocalPort 8188 | Select LocalAddress,LocalPort
-```
-
-You want **`0.0.0.0`**. If it says `127.0.0.1`, the flag did not apply and kanto
-still cannot reach it.
-
-Windows Firewall may prompt on first launch — allow it on **private** networks.
-
-That is enough to unblock everything. Jobs in the queue will start on their own.
+Nothing is blocked on it. Animate works on WAN today; LTX just cannot be
+driven yet.
 
 ---
 
-## 2. Export your LTX workflow so photodump can drive it
+## Export your LTX workflow so photodump can drive it
 
 Right now photodump can *watch* an LTX render but not *start* one. Codex wrote
 progress handling for `LTXVLatentUpsampler`, `LTXVSpatioTemporalTiledVAEDecode`
@@ -83,33 +54,38 @@ LTX_VAE=    # in models/vae/         ltx-2.5-video-vae-bf16.safetensors
 
 ---
 
-## 3. Stop having to do this in person
+---
 
-Two sessions have now built the kanto half of remote access and stopped at the
-Windows step. `~/.ssh/desktop_ollama` exists and has never been used, because
-its bootstrap was never run on this machine.
+## Already handled
 
-Paste this into an **Administrator** PowerShell. It uses only the OpenSSH
-component already in Windows, and scopes access to the tailnet:
+**ComfyUI reaches kanto, and starts itself** (2026-09-10). It is launched by
+`C:\ComfyUI\start-render-node.ps1`, via a `.cmd` in `shell:startup`, so it
+comes up at logon without you. The script binds the **tailnet IP**
+(`100.109.223.93:8188`) rather than `0.0.0.0`, deliberately — nothing on the
+local network can reach it. It waits up to five minutes for that address to
+appear before binding and falls back to loopback if it never does, so the
+Tailscale-starts-after-ComfyUI race is already handled. Do not "fix" this to
+`0.0.0.0`. It also runs an idle watchdog that drops models from VRAM once the
+queue has been empty for ten minutes, so a checkpoint is not parked in memory
+while you game; the server stays up and the next job pays a reload.
 
-```powershell
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-Set-Service sshd -StartupType Automatic; Start-Service sshd
-New-ItemProperty "HKLM:\SOFTWARE\OpenSSH" DefaultShell -Value "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force
-$k="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINxPUI21NpksQXuVJNa70FPD+OYGHy4PWtk3CXbaM1g/ kanto->desktop-ollama"; $f="$env:ProgramData\ssh\administrators_authorized_keys"
-Add-Content $f $k; icacls $f /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
-Get-NetFirewallRule -Name OpenSSH-Server-In-TCP -EA 0 | Remove-NetFirewallRule
-New-NetFirewallRule -Name sshd-tailnet -DisplayName "OpenSSH (Tailscale only)" -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow -RemoteAddress 100.64.0.0/10
-Restart-Service sshd; Get-NetTCPConnection -State Listen -LocalPort 22 | Select LocalAddress,LocalPort
-```
+**SSH from kanto works** (2026-09-10). `ssh desktop` gives a PowerShell prompt.
+Key-only, `PasswordAuthentication no`, sshd `Automatic` at boot.
 
-Expect `0.0.0.0  22` at the end.
+The firewall rule `sshd-tailnet` is scoped to **kanto's tailnet IP alone**
+(`100.97.103.85`), not the `100.64.0.0/10` range the setup script writes. That
+matters: the tailnet ACL is default allow-all and the tailnet carries shared
+nodes belonging to other accounts, so the CGNAT range was never a real
+boundary. Port 22 is not reachable from the desktop's public IP.
 
-After that I can start ComfyUI, read its logs, reconcile the workflows and set
-up an auto-start task myself — without you relaying. Key-only, tailnet-only,
-and revocable with `Stop-Service sshd; Set-Service sshd -StartupType Disabled`.
+The Windows account is **`drfxb`**, not `dylan`. That mismatch in
+`~/.ssh/config` cost a session of debugging, because it fails as
+`Permission denied (publickey)` — identical to the `administrators_authorized_keys`
+ACL problem that `~/desktop-ssh/README.md` warns about. The ACLs were right the
+whole time. Check the username first.
 
-The full version with a revoke script lives in `~/desktop-ssh`.
+Revoke with `~/desktop-ssh/disable-ssh.ps1`, or
+`Stop-Service sshd; Set-Service sshd -StartupType Disabled`.
 
 ---
 

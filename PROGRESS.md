@@ -14,6 +14,42 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-10
 
+**SSH to the render node works; the blocker was a username**
+Three sessions had built kanto's half of remote access and stopped at the
+Windows step. It finally ran, and then failed at key auth with
+`Permission denied (publickey)` — which `~/desktop-ssh/README.md` documents as
+the `administrators_authorized_keys` ACL trap.
+
+It was not that. The ACLs were correct. **The Windows account is `drfxb`, not
+`dylan`**, and `setup-kanto.sh` hardcoded the wrong name into `~/.ssh/config`.
+The two failures are indistinguishable from kanto, so the documented gotcha
+actively misled the diagnosis. Fixed the default and wrote the username into
+the README as a second named gotcha; re-running the script would otherwise
+reintroduce it on any fresh machine.
+
+**Cost:** most of the Windows-side debugging was aimed at the wrong layer,
+because a plausible documented explanation fit the symptom. Checking `whoami`
+against `~/.ssh/config` would have cost ten seconds.
+
+Also narrowed the firewall rule from `100.64.0.0/10` to kanto's tailnet IP.
+The whole-CGNAT scope the enable script writes adds nothing: the tailnet ACL
+is default allow-all and carries shared nodes belonging to another account, so
+"tailnet-only" was never the boundary it sounded like. Verified from kanto's
+public interface that ports 22/3389/8188 are unreachable at the desktop's
+public IP.
+
+**Corrected an assumption I nearly acted on:** ComfyUI binds the tailnet IP
+rather than `0.0.0.0`, which I flagged as a boot-order race. It is not —
+`start-render-node.ps1` waits five minutes for the address and falls back to
+loopback. The bind is deliberate and more restrictive. `AT-THE-DESKTOP.md` now
+says not to change it. ComfyUI also already autostarts at logon, which that doc
+still listed as a manual step.
+
+Still open: the LTX workflow export, which needs the ComfyUI GUI and so cannot
+be done over SSH. Queue drained to zero, 26 renders on disk. No GPU validation
+of the Create work yet.
+
+
 **Second Codex review: four more findings, all fixed**
 Two were bugs I introduced in the *previous* fix commit, which is the useful
 lesson — fixing six things at once created two new ones.
@@ -156,3 +192,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `eff568c` 2026-09-10 12:13 (dylan) — Add PROGRESS.md and a post-commit hook that maintains it
 - `4b4a015` 2026-09-10 12:14 (dylan) — Add a working agreement both agents read
 - `20ed9fe` 2026-09-10 12:31 (dylan) — Fix six Create issues from Codex's review; deploy
+- `1f36098` 2026-09-10 12:51 (dylan) — Fix four findings from Codex's follow-up review
