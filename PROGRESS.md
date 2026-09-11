@@ -14,6 +14,41 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-11
 
+**LTX-2.5 runs, driven end to end from kanto**
+It had never run. The `LTXV*` progress handling written earlier was written
+ahead of the fact, not from observation - ComfyUI's history held zero LTX
+graphs. I had inferred otherwise and should have checked.
+
+The blocker was never a missing click. ComfyUI's bundled
+"Image to Video (LTX-2.5)" blueprint loads the transformer with `UNETLoader`,
+which only sees safetensors; the installed transformer is a Q4_K_M **GGUF**,
+the right choice for 16GB. So that blueprint fails on load every time,
+regardless of who launches it.
+
+Built a single-pass graph by expanding the blueprint's 47-node subgraph against
+the node's live `/object_info` - not from documentation - swapping in
+`UnetLoaderGGUF` and `CLIPLoaderGGUF (type: ltxv)`, and dropping the second
+upscale pass because `ltx-2.5-latent-spatial-upscaler-x2` is not installed.
+Accepted on the first submit. 768x512, 97 frames, 24fps, with generated audio,
+in 1971s.
+
+Three bugs the wiring exposed, all found by testing rather than reading:
+config still held **guessed** filenames (`LTX25-distilled-DiT-Q4_K_M.gguf` does
+not exist, and the configured Gemma GGUF is a 148-byte failed download); the
+builder hardcoded text nodes 6/7, which are WAN's - in LTX those are the
+preprocessor and the empty latent, so prompts were written into the wrong nodes;
+and `video_backend` never reached the params, so every request would silently
+have used WAN. Text node ids are now per-backend, and preflight validates 7/7
+including both video backends.
+
+**Cost:** ~33 minutes per 4-second clip at 768x512, and about an hour at
+544x960. Slower than WAN's 20.6 minutes, for audio and better motion. This is a
+"set it going" tool on a 16GB card, not one to iterate with.
+
+**Open:** the latent upscaler is not installed, so output is capped at
+first-pass resolution.
+
+
 **Benchmarked the render node, and fixed a 20-second dead wait it exposed**
 First real performance measurements now that ComfyUI is reachable.
 
@@ -317,3 +352,4 @@ convenience. Wake-on-LAN cannot cross the tailnet from a public-IP host.
 - `f93b7ef` 2026-09-10 17:14 (dylan) — Record the SSH fix; retire the finished items in AT-THE-DESKTOP
 - `ad0ec5e` 2026-09-10 17:59 (dylan) — Add pause, stop and scheduling to the queue
 - `6148509` 2026-09-10 18:33 (dylan) — Recompute gallery tile heights when the grid resizes
+- `0f4f12a` 2026-09-11 08:30 (dylan) — Wake the worker on enqueue instead of waiting out the idle poll

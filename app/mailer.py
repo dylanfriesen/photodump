@@ -56,11 +56,30 @@ def init_outbox(conn):
 
 
 def completed(db_path):
+    """Finished renders, plus which batches still have work outstanding.
+
+    A batch is one /api/generate request; count=N makes N single-image jobs.
+    Sending as soon as the first finishes would defeat the point, so a batch is
+    held until none of its jobs are still in flight.
+    """
     with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)) as app:
         app.row_factory = sqlite3.Row
-        return app.execute("""SELECT i.id, i.job_id, i.filename, i.created_at
-            FROM images i JOIN jobs j ON j.id=i.job_id
-            WHERE j.status='done' ORDER BY i.id""").fetchall()
+        try:
+            rows = app.execute("""SELECT i.id, i.job_id, i.filename, i.created_at,
+                       COALESCE(j.batch_id,'') AS batch_id
+                FROM images i JOIN jobs j ON j.id=i.job_id
+                WHERE j.status='done' ORDER BY i.id""").fetchall()
+            busy = {r[0] for r in app.execute(
+                "SELECT DISTINCT batch_id FROM jobs WHERE batch_id<>'' "
+                "AND status IN ('queued','running','paused')").fetchall()}
+        except sqlite3.OperationalError:
+            # Older database without batch_id; fall back to per-job grouping.
+            rows = app.execute("""SELECT i.id, i.job_id, i.filename, i.created_at,
+                       '' AS batch_id
+                FROM images i JOIN jobs j ON j.id=i.job_id
+                WHERE j.status='done' ORDER BY i.id""").fetchall()
+            busy = set()
+        return rows, busy
 
 
 def attachment_parts(path, max_bytes=PART_BYTES):
@@ -69,6 +88,52 @@ def attachment_parts(path, max_bytes=PART_BYTES):
     if not size:
         raise ValueError("render file is empty")
     return max(1, (size + max_bytes - 1) // max_bytes)
+
+
+def batch_key(job_id, paths, created):
+    """Stable id for one job's whole set of renders."""
+    names = ":".join(sorted(p.name for p in paths))
+    return hashlib.sha256(f"job:{job_id}:{created}:{names}".encode()).hexdigest()
+
+
+def already_sent_individually(conn, paths):
+    """True if every file here was delivered under the old per-file scheme.
+
+    Without this, moving to one-email-per-job would make every previously
+    delivered render look new and send the whole gallery again.
+    """
+    if not paths:
+        return False
+    for path in paths:
+        row = conn.execute(
+            "SELECT 1 FROM deliveries WHERE filename=? AND status='sent' LIMIT 1",
+            (path.name,)).fetchone()
+        if not row:
+            return False
+    return True
+
+
+def make_batch_message(paths, job_id, message_id, sender, to):
+    """One email carrying every render from a single job."""
+    msg = EmailMessage(policy=email.policy.SMTP)
+    msg["From"] = sender
+    msg["To"] = to
+    n = len(paths)
+    # job_id is a short batch hash for grouped requests, which reads as noise in
+    # a subject line; the file count is what is useful there.
+    msg["Subject"] = f"Photodump: {n} render{'s' if n != 1 else ''} ready"
+    msg["Message-ID"] = message_id
+    msg["Date"] = formatdate(localtime=False)
+    msg.set_content(
+        f"Your Photodump render #{job_id} is finished — {n} file"
+        f"{'s' if n != 1 else ''} attached.\n\n"
+        + "".join(f"  {p.name}\n" for p in sorted(paths, key=lambda x: x.name)))
+    for path in sorted(paths, key=lambda x: x.name):
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        major, minor = ctype.split("/", 1)
+        msg.add_attachment(path.read_bytes(), maintype=major, subtype=minor,
+                           filename=path.name)
+    return msg
 
 
 def make_message(path, job_id, part, total, message_id, sender, to, max_bytes=PART_BYTES):
@@ -120,17 +185,109 @@ def send(msg, conf, before_data):
         client.close()
 
 
+def _deliver(conn, key, part, total, job_id, conf, sender, row, build):
+    """Send one message and record the outcome. Shared by both routes.
+
+    Kept in one place so the retry semantics cannot drift: a refused SMTP
+    command is safe to retry, but an error after DATA was accepted is
+    ambiguous and must not be resent blindly.
+    """
+    in_data = False
+
+    def before_data():
+        nonlocal in_data
+        conn.execute("UPDATE deliveries SET status='sending' WHERE render_key=? AND part=?",
+                     (key, part))
+        conn.commit()
+        in_data = True
+
+    try:
+        msg = build(f"<photodump.{key}.{part}@photodump.local>",
+                    conf.get("SMTP_FROM") or conf["SMTP_USER"], recipient(conf))
+        sender(msg, conf, before_data)
+    except Exception as exc:
+        # Never log provider responses or credentials.
+        uncertain = in_data and not isinstance(
+            exc, (smtplib.SMTPResponseException, smtplib.SMTPRecipientsRefused))
+        status = "uncertain" if uncertain else "pending"
+        delay = min(3600, 30 * 2 ** min(row[1], 7))
+        conn.execute("UPDATE deliveries SET status=?,attempts=attempts+1,next_attempt=?,error=? "
+                     "WHERE render_key=? AND part=?",
+                     (status, time.time() + delay, type(exc).__name__, key, part))
+        log.warning("render %s part %s: %s (%s)", job_id, part, status, type(exc).__name__)
+    else:
+        conn.execute("UPDATE deliveries SET status='sent',attempts=attempts+1,error='',"
+                     "sent_at=datetime('now') WHERE render_key=? AND part=?", (key, part))
+        log.info("render %s part %s/%s accepted by SMTP for %s", job_id, part, total, msg["To"])
+    conn.commit()
+
+
 def tick(conn, data, conf, sender=send, max_bytes=PART_BYTES):
     ready = bool(conf.get("SMTP_USER") and conf.get("SMTP_PASS") and recipient(conf))
-    for render in completed(data / "photodump.db"):
+    out = (data / "out").resolve()
+
+    # One email per job rather than per image. Files are grouped by job, and a
+    # job whose renders all fit under the attachment limit travels as a single
+    # message; anything oversized falls back to the old per-file path, which
+    # still chunks a large video across numbered parts.
+    rows, busy = completed(data / "photodump.db")
+    jobs = {}
+    for render in rows:
         path = (data / "out" / render["filename"]).resolve()
-        if not path.is_relative_to((data / "out").resolve()) or not path.is_file():
+        if not path.is_relative_to(out) or not path.is_file():
             continue  # deleted renders are not sent
-        key = hashlib.sha256(f"{render['id']}:{render['created_at']}:{render['filename']}".encode()).hexdigest()
+        batch = render["batch_id"]
+        if batch and batch in busy:
+            continue   # the rest of this request is still rendering
+        # Group by request where one exists, else by job as before.
+        gid = f"batch:{batch}" if batch else f"job:{render['job_id']}"
+        jobs.setdefault(gid, {"created": render["created_at"], "paths": [],
+                              "label": batch[:8] if batch else render["job_id"]})
+        # image id is kept because the per-file delivery key is hashed from it;
+        # substituting anything else makes every already-sent file look new.
+        jobs[gid]["paths"].append(path)
+        jobs[gid].setdefault("ids", {})[path] = (render["id"], render["job_id"])
+
+    singles = []
+    for gid, info in jobs.items():
+        job_id = info["label"]
+        paths = info["paths"]
+        try:
+            size = sum(p.stat().st_size for p in paths)
+        except OSError:
+            log.warning("render %s file unavailable; will retry", job_id)
+            continue
+        if len(paths) > 1 and size <= max_bytes:
+            key = batch_key(job_id, paths, info["created"])
+            message_id = f"<photodump.{key}.1@photodump.local>"
+            conn.execute("INSERT OR IGNORE INTO deliveries(render_key,part,filename,message_id) "
+                         "VALUES (?,?,?,?)",
+                         (key, 1, f"{len(paths)} files from job {job_id}", message_id))
+            conn.commit()
+            row = conn.execute("SELECT status,attempts,next_attempt FROM deliveries "
+                               "WHERE render_key=? AND part=1", (key,)).fetchone()
+            if row[0] == "pending" and already_sent_individually(conn, paths):
+                conn.execute("UPDATE deliveries SET status='sent',error='already delivered individually',"
+                             "sent_at=datetime('now') WHERE render_key=? AND part=1", (key,))
+                conn.commit()
+                continue
+            if not ready or row[0] != "pending" or row[2] > time.time():
+                continue
+            _deliver(conn, key, 1, 1, job_id, conf, sender, row,
+                     lambda mid, frm, to: make_batch_message(paths, job_id, mid, frm, to))
+        else:
+            singles.extend((info["ids"][p][1], info["ids"][p][0], info["created"], p)
+                           for p in paths)
+
+    for job_id, image_id, created, path in singles:
+        render = {"job_id": job_id, "created_at": created, "id": image_id}
+        # Identical to the original formula - do not change it without a
+        # migration, or every delivered render is sent again.
+        key = hashlib.sha256(f"{image_id}:{created}:{path.name}".encode()).hexdigest()
         try:
             total = attachment_parts(path, max_bytes)
         except (OSError, ValueError):
-            log.warning("render %s file unavailable; will retry", render['job_id'])
+            log.warning("render %s file unavailable; will retry", job_id)
             continue
         for part in range(1, total + 1):
             message_id = f"<photodump.{key}.{part}@photodump.local>"
@@ -140,33 +297,9 @@ def tick(conn, data, conf, sender=send, max_bytes=PART_BYTES):
             row = conn.execute("SELECT status,attempts,next_attempt FROM deliveries WHERE render_key=? AND part=?", (key, part)).fetchone()
             if not ready or row[0] != "pending" or row[2] > time.time():
                 continue
-            in_data = False
-
-            def before_data():
-                nonlocal in_data
-                conn.execute("UPDATE deliveries SET status='sending' WHERE render_key=? AND part=?", (key, part))
-                conn.commit()
-                in_data = True
-
-            try:
-                msg = make_message(path, render["job_id"], part, total, message_id,
-                                   conf.get("SMTP_FROM") or conf["SMTP_USER"],
-                                   recipient(conf), max_bytes)
-                sender(msg, conf, before_data)
-            except Exception as exc:
-                # Never log provider responses or credentials. Refused SMTP
-                # commands are safe to retry; a lost final ACK is ambiguous.
-                uncertain = in_data and not isinstance(exc, (smtplib.SMTPResponseException, smtplib.SMTPRecipientsRefused))
-                status = "uncertain" if uncertain else "pending"
-                delay = min(3600, 30 * 2 ** min(row[1], 7))
-                error = type(exc).__name__
-                conn.execute("UPDATE deliveries SET status=?,attempts=attempts+1,next_attempt=?,error=? WHERE render_key=? AND part=?",
-                             (status, time.time() + delay, error, key, part))
-                log.warning("render %s part %s: %s (%s)", render["job_id"], part, status, error)
-            else:
-                conn.execute("UPDATE deliveries SET status='sent',attempts=attempts+1,error='',sent_at=datetime('now') WHERE render_key=? AND part=?", (key, part))
-                log.info("render %s part %s/%s accepted by SMTP for %s", render["job_id"], part, total, msg["To"])
-            conn.commit()
+            _deliver(conn, key, part, total, render["job_id"], conf, sender, row,
+                     lambda mid, frm, to: make_message(path, render["job_id"], part, total,
+                                                       mid, frm, to, max_bytes))
     return ready
 
 

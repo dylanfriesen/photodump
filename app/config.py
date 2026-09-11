@@ -90,10 +90,13 @@ WAN_VAE = os.getenv("WAN_VAE", "wan2.2_vae.safetensors")
 # Which video model the Animate task uses. See VIDEO_BACKENDS in comfy.py.
 VIDEO_BACKEND = os.getenv("VIDEO_BACKEND", "wan")
 
-# LTX-2.5 model files, unset until the desktop session installs them.
-LTX_UNET = os.getenv("LTX_UNET", "LTX25-distilled-DiT-Q4_K_M.gguf")
-LTX_CLIP = os.getenv("LTX_CLIP", "gemma4-12b-with-proj-ltx-2.5-Q5_K_M.gguf")
+# LTX-2.5 files, confirmed present on the node. The Q5_K_M gemma GGUF is a
+# 148-byte failed download - use the int8 safetensors encoder instead.
+LTX_UNET = os.getenv("LTX_UNET", "ltx-2.5-22b-distilled-transformer-Q4_K_M.gguf")
+LTX_CLIP = os.getenv("LTX_CLIP",
+                     "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors")
 LTX_VAE = os.getenv("LTX_VAE", "ltx-2.5-video-vae-bf16.safetensors")
+LTX_AUDIO_VAE = os.getenv("LTX_AUDIO_VAE", "ltx-2.5-audio-vae-bf16.safetensors")
 
 # Output buckets for the Animate task. The 540-class entries exist because a
 # 16GB card running a GGUF quant is far happier there than at 720p, and an

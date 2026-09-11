@@ -91,3 +91,70 @@ class MailerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BatchTests(unittest.TestCase):
+    """One email per request, and never a second copy of what already went."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data = Path(self.tmp.name)
+        (self.data / 'out').mkdir()
+        self.conf = {'SMTP_USER': 'sender@example.com', 'SMTP_PASS': 'test-only',
+                     'MAIL_TO': 'me@example.com'}
+        self.sent = []
+
+    def send(self, msg, conf, before):
+        before()
+        self.sent.append(msg)
+
+    def build(self, jobs):
+        """jobs: (job_id, batch_id, status, filename or None)"""
+        with closing(sqlite3.connect(self.data / 'photodump.db')) as app:
+            app.executescript("""
+                CREATE TABLE IF NOT EXISTS jobs(id INTEGER, status TEXT, batch_id TEXT);
+                CREATE TABLE IF NOT EXISTS images(id INTEGER, job_id INTEGER,
+                                                  filename TEXT, created_at TEXT);
+            """)
+            n = 0
+            for job_id, batch, status, name in jobs:
+                app.execute('INSERT INTO jobs VALUES(?,?,?)', (job_id, status, batch))
+                if name:
+                    n += 1
+                    (self.data / 'out' / name).write_bytes(b'x' * 1024)
+                    app.execute('INSERT INTO images VALUES(?,?,?,?)',
+                                (n, job_id, name, 'today'))
+            app.commit()
+        conn = sqlite3.connect(self.data / 'outbox.sqlite3')
+        self.addCleanup(conn.close)
+        mailer.init_outbox(conn)
+        return conn
+
+    def test_one_request_sends_one_email(self):
+        # count=N creates N single-image jobs sharing a batch id.
+        conn = self.build([(1, 'B', 'done', 'a.png'),
+                           (2, 'B', 'done', 'b.png'),
+                           (3, 'B', 'done', 'c.png')])
+        mailer.tick(conn, self.data, self.conf, self.send)
+        self.assertEqual(len(self.sent), 1)
+        names = sorted(a.get_filename() for a in self.sent[0].iter_attachments())
+        self.assertEqual(names, ['a.png', 'b.png', 'c.png'])
+
+    def test_batch_waits_for_the_whole_request(self):
+        # Sending as soon as the first job lands would defeat the batching.
+        conn = self.build([(1, 'B', 'done', 'a.png'),
+                           (2, 'B', 'done', 'b.png'),
+                           (3, 'B', 'running', None)])
+        mailer.tick(conn, self.data, self.conf, self.send)
+        self.assertEqual(self.sent, [])
+
+    def test_already_delivered_files_are_not_resent(self):
+        # Regression: changing the per-file delivery key once made every
+        # previously sent render look new and remailed the whole gallery.
+        conn = self.build([(1, '', 'done', 'a.png')])
+        mailer.tick(conn, self.data, self.conf, self.send)
+        self.assertEqual(len(self.sent), 1)
+        self.sent.clear()
+        mailer.tick(conn, self.data, self.conf, self.send)
+        self.assertEqual(self.sent, [], 'a delivered render was sent twice')

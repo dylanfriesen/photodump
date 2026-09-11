@@ -15,7 +15,7 @@ import websockets
 
 from .config import (COMFY_HOST, COMFY_PORT, COMFY_URL, CHECKPOINT, ASPECTS,
                      VIDEO_SIZES, VIDEO_BACKEND, WAN_UNET, WAN_CLIP, WAN_VAE,
-                     LTX_UNET, LTX_CLIP, LTX_VAE)
+                     LTX_UNET, LTX_CLIP, LTX_VAE, LTX_AUDIO_VAE)
 
 WORKFLOWS = Path(__file__).parent / "workflows"
 
@@ -233,6 +233,12 @@ def build(prompt: str, negative: str, params: dict,
         wf["5"]["inputs"]["height"] = h
         if mode in ("ipadapter", "ipadapter_multi"):
             wf["13"]["inputs"]["weight"] = float(params.get("ip_weight", 0.7))
+            # "linear" carries the reference's content and palette as well as
+            # its look, which is wrong when the point is "this style, different
+            # subject". The pack also offers style/composition-only variants.
+            wt = params.get("ip_weight_type")
+            if wt:
+                wf["13"]["inputs"]["weight_type"] = wt
             if mode == "ipadapter_multi":
                 _chain_references(wf, ref_names)
             else:
@@ -259,11 +265,31 @@ VIDEO_BACKENDS = {
         "latent": "23",         # takes width / height / length
         "sampler": "3",
         "fps_nodes": {"24": "fps"},
+        "text_nodes": ("6", "7"),
         "frame_multiple": 4,    # WAN wants 4n+1 frames
         "defaults": {"steps": 20, "cfg": 5.0,
                      "sampler_name": "uni_pc", "scheduler": "simple"},
     },
-    # "ltx": filled in by whoever installs LTX-2.5. Export ComfyUI's official
+    "ltx": {
+        "workflow": "ltx_i2v",
+        "models": {"1": ("unet_name", LTX_UNET),
+                   "2": ("clip_name", LTX_CLIP),
+                   "3": ("vae_name", LTX_VAE),
+                   "4": ("vae_name", LTX_AUDIO_VAE)},
+        "image": "5",
+        "latent": "7",           # EmptyLTXVLatentVideo
+        "audio_latent": "9",     # frames_number must track the video length
+        # SamplerCustomAdvanced carries no seed/steps/cfg: the schedule lives in
+        # ManualSigmas and the seed in RandomNoise, so they are named here
+        # rather than assumed to sit on the sampler node.
+        "seed_node": "17",
+        "sampler": None,
+        "fps_nodes": {"13": "frame_rate", "22": "fps"},
+        "text_nodes": ("11", "12"),
+        "frame_multiple": 8,     # LTX wants 8n+1 frames
+        "defaults": {},
+    },
+    # Note: ComfyUI's bundled LTX blueprint cannot run here as shipped. It loads
     # LTX-2.5 image-to-video template via Workflow -> Export (API Format),
     # save it as app/workflows/ltx_i2v.json, then describe it here. LTX uses
     # UnetLoaderGGUF / CLIPLoaderGGUF (type: ltxv) and separate video and
@@ -285,11 +311,16 @@ def _build_video(prompt: str, negative: str, params: dict, ref_name: str) -> tup
     seed = int(seed) if seed and int(seed) > 0 else random.randint(1, 2**31 - 1)
 
     for node, (field, default) in spec["models"].items():
-        wf[node]["inputs"][field] = params.get(field) or default
+        # keyed by node, because one graph may load two VAEs through one field
+        wf[node]["inputs"][field] = params.get(f"{field}_{node}") or default
 
     wf[spec["image"]]["inputs"]["image"] = ref_name
-    wf["6"]["inputs"]["text"] = prompt
-    wf["7"]["inputs"]["text"] = negative
+    # Prompt node ids differ per graph - 6/7 are WAN's, but LTX uses those for
+    # preprocessing and the empty latent.
+    pos_node, neg_node = spec.get("text_nodes", ("6", "7"))
+    wf[pos_node]["inputs"]["text"] = prompt
+    if negative:
+        wf[neg_node]["inputs"]["text"] = negative
 
     w, h = VIDEO_SIZES.get(params.get("video_size", "story"), VIDEO_SIZES["story"])
     fps = int(params.get("fps", 16))
@@ -300,15 +331,20 @@ def _build_video(prompt: str, negative: str, params: dict, ref_name: str) -> tup
         length = max(m * 4 + 1, length - (length - 1) % m)
     wf[spec["latent"]]["inputs"].update({"width": w, "height": h, "length": length})
 
-    k = wf[spec["sampler"]]["inputs"]
-    d = spec["defaults"]
-    k.update({
-        "seed": seed,
-        "steps": int(params.get("steps", d["steps"])),
-        "cfg": float(params.get("cfg", d["cfg"])),
-        "sampler_name": params.get("sampler", d["sampler_name"]),
-        "scheduler": d["scheduler"],
-    })
+    if spec.get("audio_latent"):
+        wf[spec["audio_latent"]]["inputs"]["frames_number"] = length
+    if spec.get("seed_node"):
+        wf[spec["seed_node"]]["inputs"]["noise_seed"] = seed
+    if spec.get("sampler"):
+        k = wf[spec["sampler"]]["inputs"]
+        d = spec["defaults"]
+        k.update({
+            "seed": seed,
+            "steps": int(params.get("steps", d["steps"])),
+            "cfg": float(params.get("cfg", d["cfg"])),
+            "sampler_name": params.get("sampler", d["sampler_name"]),
+            "scheduler": d["scheduler"],
+        })
     for node, field in spec.get("fps_nodes", {}).items():
         wf[node]["inputs"][field] = float(fps)
     return wf, seed

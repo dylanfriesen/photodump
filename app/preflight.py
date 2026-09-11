@@ -23,7 +23,8 @@ WORKFLOWS = [
     ("ipadapter", "IP-Adapter",      {"workflow": "ipadapter"}),
     ("ipadapter_multi", "Multi-reference", {"workflow": "ipadapter_multi"}),
     ("outpaint",  "Extend",          {"workflow": "outpaint"}),
-    ("wan_i2v",   "Animate",         {"workflow": "wan_i2v"}),
+    ("wan_i2v",   "Animate (WAN)",   {"workflow": "wan_i2v", "video_backend": "wan"}),
+    ("ltx_i2v",   "Animate (LTX)",   {"workflow": "wan_i2v", "video_backend": "ltx"}),
 ]
 
 

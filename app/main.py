@@ -150,6 +150,7 @@ async def api_generate(payload: dict):
         "cfg": float(payload.get("cfg", 5.0)),
         "denoise": float(payload.get("denoise", 0.65)),
         "ip_weight": float(payload.get("ip_weight", 0.7)),
+        "ip_weight_type": payload.get("ip_weight_type"),
         "workflow": payload.get("workflow"),
         "checkpoint": payload.get("checkpoint"),
         "free_prompt": bool(free),
@@ -157,6 +158,7 @@ async def api_generate(payload: dict):
         "extend_target": payload.get("extend_target", "portrait"),
         "extend_anchor": payload.get("extend_anchor", "center"),
         "video_size": payload.get("video_size", "story"),
+        "video_backend": payload.get("video_backend"),   # wan | ltx
         "seconds": float(payload.get("seconds", 3)),
         "fps": int(payload.get("fps", 16)),
         # Kept so a caption can be drafted from what this image actually is,
@@ -181,14 +183,17 @@ async def api_generate(payload: dict):
                  "or use ipadapter_multi")
 
     ids = []
+    # count=N creates N single-image jobs. They share a batch id so the mailer
+    # can send the whole request as one email rather than N of them.
+    batch = uuid.uuid4().hex
     with db() as conn:
         for _ in range(count):
             cur = conn.execute(
-                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, ref_ids, src_image_id) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, ref_ids, "
+                "src_image_id, batch_id) VALUES (?,?,?,?,?,?,?,?)",
                 (payload.get("recipe_id"), prompt, negative, json.dumps(params),
                  ref_ids[0] if ref_ids else None, json.dumps(ref_ids),
-                 payload.get("src_image_id")),
+                 payload.get("src_image_id"), batch),
             )
             ids.append(cur.lastrowid)
     worker.wake()
