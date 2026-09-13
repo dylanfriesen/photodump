@@ -257,5 +257,51 @@ curl -s -X POST $B/api/queue/resume >/dev/null
 wait_for "[j for j in jobs if j['id']==$PID_ and j['status']=='done']" 90 \
   && ok "drained once the queue resumed" || bad "did not drain after resume"
 
+say "15. style match chain: cleaned reference, pass-2 tags, upscale on pass 2 only"
+start_mock --latency 2
+docker run --rm -v /tmp:/t ${PROJ}-photodump python -c "
+from PIL import Image, ImageDraw
+im = Image.new('RGB', (680, 856), (20, 20, 24))
+ImageDraw.Draw(im).rectangle((30, 100, 110, 700), fill=(240, 240, 240))
+im.save('/t/smoke_style.png')" >/dev/null 2>&1
+SREF=$(curl -s -X POST $B/api/refs -F "file=@/tmp/smoke_style.png" -F "label=style" -F "kind=style" | field "d['id']")
+check "fill preview is the reference's size" \
+  "$(curl -s -X POST $B/api/refs/$SREF/clean-preview -H 'Content-Type: application/json' \
+      -d '{"regions":[[0.03,0.1,0.15,0.75]]}' | python3 -c "
+import sys, struct; b = sys.stdin.buffer.read(); print('%dx%d' % struct.unpack('>II', b[16:24]))")" "680x856"
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' -d "{
+  \"prompt\":\"cynthia\",\"quality\":false,\"negative_full\":\"text\",\"workflow\":\"img2img\",
+  \"ref_ids\":[$SREF],\"denoise\":0.45,\"count\":1,\"second_pass\":true,\"hires\":true,
+  \"second_pass_prompt_add\":\"platinum blonde hair\",\"second_pass_negative_add\":\"dark hair\",
+  \"clean_regions\":[[0.03,0.1,0.15,0.75]]}" >/dev/null
+wait_for "len([j for j in jobs if 'platinum blonde' in j['prompt'] and j['status']=='done'])==1" 120 \
+  && ok "pass 2 was chained and completed" || bad "pass 2 never completed"
+{ read -r P1; read -r P2; } < <(curl -s $B/api/jobs | python3 -c "
+import json,sys
+jobs = json.load(sys.stdin)
+p2 = [j for j in jobs if 'platinum blonde' in j['prompt']][0]
+p1 = [j for j in jobs if 'platinum blonde hair' in j['params']][0]
+a, b = json.loads(p1['params']), json.loads(p2['params'])
+print('%s|%s|%s' % (p1['prompt'], bool(a.get('clean_boxes')), a.get('hires')))
+print('%s|%s|%s|%s' % (p2['negative'], 'clean_regions' in b, b.get('hires'), p2['src_image_id'] is not None))")
+check "pass 1: original prompt, reference cleaned, hires deferred" "$P1" "cynthia|True|True"
+check "pass 2: negative extended, no re-clean, hires on, sourced from pass 1" "$P2" "text, dark hair|False|True|True"
+
+say "16. a still delivers as an exact-size JPEG with the node DOWN"
+docker kill mock-comfy >/dev/null 2>&1
+STILL=$(curl -s $B/api/images | field "[i['id'] for i in d if i['filename'].endswith('.png')][0]")
+curl -s -X POST $B/api/images/$STILL/deliver -H 'Content-Type: application/json' -d '{"target":"feed"}' >/dev/null
+wait_for "any(j['status']=='done' and 'feed encode of #$STILL' in j['prompt'] for j in jobs)" 60 \
+  && ok "still delivery ran locally" || bad "still delivery did not run"
+DJ=$(curl -s $B/api/jobs | field "[j['id'] for j in d if 'feed encode of #$STILL' in j['prompt']][0]")
+check "delivered still is a 1080x1350 JPEG" \
+  "$(docker exec ${CONTAINER_NAME} python -c "
+from PIL import Image; im = Image.open('/srv/data/_smoke/out/${DJ}_ig.jpg'); print(im.format, '%dx%d' % im.size)")" "JPEG 1080x1350"
+
+say "17. video settings without a video workflow are refused, not rendered as a still"
+check "LTX params with no workflow -> 400" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/generate -H 'Content-Type: application/json' \
+      -d "{\"prompt\":\"x\",\"ref_ids\":[$SREF],\"video_backend\":\"ltx\",\"video_size\":\"story_hd\"}")" "400"
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

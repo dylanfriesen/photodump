@@ -20,6 +20,10 @@ LOADERS = {
 WORKFLOWS = [
     ("txt2img",   "Fuse",            {"workflow": "txt2img"}),
     ("img2img",   "Fuse w/ reference", {"workflow": "img2img"}),
+    ("img2img_hires_pixel", "Upscale tail (pixel)",
+     {"workflow": "img2img", "hires": True, "hires_method": "pixel"}),
+    ("img2img_hires", "Upscale tail (latent)",
+     {"workflow": "img2img", "hires": True, "hires_method": "latent"}),
     ("ipadapter", "IP-Adapter",      {"workflow": "ipadapter"}),
     ("ipadapter_multi", "Multi-reference", {"workflow": "ipadapter_multi"}),
     ("outpaint",  "Extend",          {"workflow": "outpaint"}),

@@ -12,6 +12,53 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ---
 
+## 2026-09-13
+
+**The four open image items, built as far as kanto can take them**
+
+**Why.** The style-match recipe works but leaves four defects (fake lettering,
+dark-hair carry-over, a 680x856 ceiling, not quite 4:5). Dylan asked for
+everything that does not need the GPU. So each defect now has a mechanism
+ready for a render session: `clean_regions` fills lettering out of the reference
+on kanto before pass 1; `second_pass_prompt_add` / `_negative_add` give pass 2
+colour tags pass 1 must not have; an img2img upscale tail (pixel route by
+default, latent optional, pass 2 only when chained, 2.3MP cap) replaces the
+txt2img-only hires flag; stills deliver as 1080x1350 JPEGs, cropping the 6px
+that 680x856 is off 4:5. RECIPES.md has the table of what each still needs
+proven and a suggested sweep.
+
+**What it cost.** The first fill blurred the box in place, which smears the
+text into its own replacement; it became normalised convolution, verified on
+ref 4 (the name text, watermark and Instagram carousel buttons — the references
+are *screenshots*, which is where the fake badges came from). A unit test caught
+that a source already over the pixel cap clamped to a 1.0x tail that would
+re-sample the whole frame for nothing; that now skips the tail.
+`tools/test_progress.py` had hung forever since `0f4f12a` — it broke the worker
+loop by patching `asyncio.sleep`, which the loop no longer calls.
+
+**The job 68 finding.** The "LTX HD render done in 2 minutes, treat as suspect"
+note was worse than suspect: job 68 had `video_backend: ltx` and no `workflow`,
+so `build()` quietly made it an img2img still (680x856, 11s). The two-pass
+`story_hd` graph has **never been submitted**. `/api/generate` now returns 400
+for video settings without `workflow: wan_i2v`. AT-THE-DESKTOP.md also claimed
+LTX could not be started at all, which job 49 disproves; corrected.
+
+**Codex back-check.** Two rounds. Round one found four P2s and no P0/P1: the
+fill preview had no pixel or concurrency bound; naming `img2img_hires_pixel` as
+the workflow bypassed the worker's prep and pass-1 suppression; a late preview
+could show the wrong reference or stale boxes; and a second finger's pointer
+events finished the first finger's drag, making boxes big enough to erase the
+subject. Fixed with a 16MP header check plus a one-at-a-time lock, a public
+workflow allowlist, a box/reference revision counter, and single-pointer drags.
+Round two confirmed three and found the revision counter only moved when a drag
+*ended*, so a preview landing mid-drag still displayed; the counter now moves
+when a drag starts. Reproduced and verified in headless Chromium over CDP.
+
+**Unproven.** No render of any of this has happened. Both upscale graphs pass
+a check against the desktop's live `/object_info`, which proves acceptance, not
+quality. Whether the pixel route really keeps cel shading better than the
+latent route is reasoning from the 0.45/0.55 sweep, not a measurement.
+
 ## 2026-09-11
 
 **Image recipe evidence audit; render experiments blocked**
@@ -449,3 +496,4 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `4c7a330` 2026-09-11 13:42 (dylan) — Add a hires-fix pass; correct two false 'missing model' findings
 - `71bb641` 2026-09-11 14:26 (dylan) — Solve style matching with a chained two-pass img2img
 - `5981316` 2026-09-11 14:28 (dylan) — Record the image recipe so another session can pick it up
+- `9703f9e` 2026-09-13 15:17 (dylan) — Audit saved style-match renders; add a render-vs-reference scorer

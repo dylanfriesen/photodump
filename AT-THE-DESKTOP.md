@@ -1,15 +1,24 @@
 # Do these at the desktop
 
-**One thing left, and it can only be done at the machine** — it needs the
-ComfyUI GUI, so SSH does not help. Everything else on this list is done; see
-*Already handled* at the bottom for what changed and when.
+**Status correction, 2026-09-13:** the LTX export below is **done** —
+`app/workflows/ltx_i2v.json` exists, is wired into `VIDEO_BACKENDS`, and job 49
+rendered through it (`data/out/49_0_0.mp4`: 544x960 H.264 + AAC, 89 frames,
+3.7s, verified with ffprobe). The section is kept for the record.
 
-Nothing is blocked on it. Animate works on WAN today; LTX just cannot be
-driven yet.
+**What is actually unproven on video:** the two-pass `story_hd` (1088x1920)
+path, nodes 24-30. Its only "test" was job 68, which was queued with
+`video_backend: ltx` but **no `workflow`** — so `build()` resolved its lone
+reference to img2img and rendered a 680x856 *still* in 11 seconds. The LTX HD
+graph has never been submitted. `/api/generate` now refuses video settings
+without `workflow: wan_i2v`, so that mistake cannot recur silently. Video is
+parked at Dylan's request.
+
+**Image experiments waiting for a GPU session:** see RECIPES.md, *Built
+2026-09-13 for the open items*. None needs the GUI — they queue from the app.
 
 ---
 
-## Export your LTX workflow so photodump can drive it
+## (done) Export your LTX workflow so photodump can drive it
 
 Right now photodump can *watch* an LTX render but not *start* one. Codex wrote
 progress handling for `LTXVLatentUpsampler`, `LTXVSpatioTemporalTiledVAEDecode`

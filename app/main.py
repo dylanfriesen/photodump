@@ -1,16 +1,17 @@
 import asyncio
 import json
 import shutil
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import captions, comfy, deliver, preflight, reels, worker
+from . import captions, comfy, deliver, imageops, preflight, reels, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows, set_setting
 from .prompts import (MODES, QUALITY, STARTERS, compile_negative, compile_parts,
@@ -99,6 +100,32 @@ async def api_add_ref(
         return {"id": cur.lastrowid, "filename": name}
 
 
+@app.post("/api/refs/{ref_id}/clean-preview")
+async def api_clean_preview(ref_id: int, payload: dict):
+    """The reference exactly as img2img will see it after filling `regions`.
+
+    Runs the same fill the worker runs, on kanto, so a bad box can be seen
+    and redrawn before it costs a render.
+    """
+    with db() as conn:
+        row = conn.execute("SELECT * FROM refs WHERE id=?", (ref_id,)).fetchone()
+    if not row or row["kind"] == "audio":
+        raise HTTPException(404, "no such image reference")
+    regions = _regions(payload.get("regions"))
+    dst = Path(tempfile.gettempdir()) / f"photodump_clean_{uuid.uuid4().hex}.png"
+    try:
+        async with _fill_lock:
+            await asyncio.to_thread(imageops.fill_regions, REFS / row["filename"], dst, regions)
+        data = dst.read_bytes()
+    except imageops.TooLarge as e:
+        raise HTTPException(413, str(e))
+    except OSError as e:          # PIL raises UnidentifiedImageError, an OSError
+        raise HTTPException(422, f"cannot read reference: {e}")
+    finally:
+        dst.unlink(missing_ok=True)
+    return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @app.delete("/api/refs/{ref_id}")
 async def api_del_ref(ref_id: int):
     with db() as conn:
@@ -126,6 +153,27 @@ async def api_preview(payload: dict):
         "groups": compile_parts(a, b, mode, extra),
         "tokens": len([t for t in prompt.split(",") if t.strip()]),
     }
+
+
+PUBLIC_WORKFLOWS = {None, "", "txt2img", "img2img", "ipadapter", "ipadapter_multi",
+                    "outpaint", "wan_i2v"}
+
+# One fill at a time: each holds several full-size float buffers, and nothing
+# else stops a burst of previews on large references eating the box's memory.
+_fill_lock = asyncio.Semaphore(1)
+
+
+def _regions(raw) -> list:
+    """Keep only well-formed [x, y, w, h] fraction boxes; drop the rest."""
+    out = []
+    for r in raw or []:
+        try:
+            x, y, w, h = (float(v) for v in r)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= x < 1 and 0 <= y < 1 and w > 0 and h > 0:
+            out.append([round(x, 4), round(y, 4), round(min(w, 1 - x), 4), round(min(h, 1 - y), 4)])
+    return out[:32]
 
 
 @app.post("/api/generate")
@@ -164,10 +212,20 @@ async def api_generate(payload: dict):
         # the colours pass 1 inherits along with the style. See _queue_second_pass.
         "second_pass": bool(payload.get("second_pass")),
         "second_pass_denoise": float(payload.get("second_pass_denoise", 0.65)),
+        # Tags only pass 2 gets, appended to the shared prompt / negative.
+        "second_pass_prompt_add": str(payload.get("second_pass_prompt_add") or "").strip(),
+        "second_pass_negative_add": str(payload.get("second_pass_negative_add") or "").strip(),
         "hires": bool(payload.get("hires")),
         "hires_scale": float(payload.get("hires_scale", 1.5)),
         "hires_steps": int(payload.get("hires_steps", 20)),
-        "hires_denoise": float(payload.get("hires_denoise", 0.45)),
+        # None, not a number: build() picks a different default per upscale
+        # route, and a value baked in here would silently override it.
+        "hires_denoise": (float(payload["hires_denoise"])
+                          if payload.get("hires_denoise") is not None else None),
+        # img2img only: "pixel" (lanczos, default) or "latent" (bicubic).
+        "hires_method": payload.get("hires_method") or "pixel",
+        # [x, y, w, h] fractions of the reference to fill before img2img.
+        "clean_regions": _regions(payload.get("clean_regions")),
         "seconds": float(payload.get("seconds", 3)),
         "fps": int(payload.get("fps", 16)),
         # Kept so a caption can be drafted from what this image actually is,
@@ -190,6 +248,22 @@ async def api_generate(payload: dict):
         raise HTTPException(
             400, "img2img conditions on a single image; pass one reference "
                  "or use ipadapter_multi")
+    # Job 68 asked for an LTX story_hd clip with no workflow. build() resolved
+    # its lone reference to img2img and rendered a 680x856 still in 11s, which
+    # was read as a suspiciously fast video render. Refuse instead of guessing.
+    if ((payload.get("video_backend") or payload.get("video_size"))
+            and params["workflow"] != "wan_i2v"):
+        raise HTTPException(
+            400, "video_backend/video_size need workflow 'wan_i2v'; without it "
+                 "this would render a still")
+    # The *_hires graphs are chosen by build() from `hires`; naming one directly
+    # skipped the worker's prep (cleanup, pixel cap) and pass-1 suppression.
+    if params["workflow"] not in PUBLIC_WORKFLOWS:
+        raise HTTPException(
+            400, f"workflow must be one of {sorted(w for w in PUBLIC_WORKFLOWS if w)}; "
+                 "upscaling is `hires: true`, not a workflow name")
+    if params["hires_method"] not in ("pixel", "latent"):
+        raise HTTPException(400, "hires_method must be 'pixel' or 'latent'")
 
     ids = []
     # count=N creates N single-image jobs. They share a batch id so the mailer
@@ -246,15 +320,18 @@ async def api_reel(payload: dict):
 
 @app.post("/api/images/{image_id}/deliver")
 async def api_deliver(image_id: int, payload: dict):
-    """Queue an Instagram-ready re-encode of an existing clip or reel."""
+    """Queue an Instagram-ready version of a clip, reel or still.
+
+    Clips become an H.264 mp4; stills become a 1080-wide JPEG, cropped when
+    they are within a few percent of the ratio and padded otherwise.
+    """
     with db() as conn:
         row = conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
     if not row:
         raise HTTPException(404, "no such image")
-    if not row["filename"].lower().endswith((".webm", ".mp4")):
-        raise HTTPException(400, "only clips and reels can be delivered")
+    still = Path(row["filename"]).suffix.lower() in ALLOWED
 
-    target = payload.get("target", "reel")
+    target = payload.get("target", "feed" if still else "reel")
     if target not in deliver.TARGETS:
         raise HTTPException(400, f"target must be one of {sorted(deliver.TARGETS)}")
     params = {"workflow": "deliver", "src_image_id": image_id, "target": target}
@@ -264,7 +341,7 @@ async def api_deliver(image_id: int, payload: dict):
             (f"instagram {target} encode of #{image_id}", "", json.dumps(params)))
     worker.wake()
     return {"queued": [cur.lastrowid], "target": target,
-            "size": deliver.TARGETS[target]}
+            "size": deliver.TARGETS[target], "still": still}
 
 
 # ---------- queue + gallery ----------

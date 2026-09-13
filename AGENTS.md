@@ -70,9 +70,10 @@ nobody notices.
   `restart` ships nothing, and a stale image has wasted time three times now.
 - `data/` and `.env` are gitignored. The repo is **public** — no personal
   addresses or credentials in tracked files.
-- Tests: `./tools/smoke.sh` (24 assertions, no GPU) and
-  `python -m unittest tools.test_mailer tools.test_progress`, run with `tools/`
-  mounted since the image does not ship it.
+- Tests: `./tools/smoke.sh` (43 assertions, no GPU, ~12 min) and
+  `python -m unittest tools.test_images tools.test_mailer tools.test_progress`,
+  run with `tools/` mounted since the image does not ship it:
+  `docker run --rm -v $PWD/app:/srv/app:ro -v $PWD/tools:/srv/tools:ro -e DATA_DIR=/tmp/t -w /srv photodump-photodump python -m unittest ...`
 
 ## Recipes
 

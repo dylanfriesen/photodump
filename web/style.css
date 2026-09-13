@@ -710,3 +710,19 @@ select option { background: var(--input); color: var(--ink); }
 .refpick .lbl { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: 9px;
   color: var(--ink-3); background: rgba(6,8,11,.72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 900px) { .refpick { grid-template-columns: repeat(3, 1fr); } }
+
+/* Create: boxes drawn over the reference are filled on kanto before img2img.
+   Coordinates are fractions of the image, so the pad can be any size. */
+.cleanpad { position: relative; border: 1px solid var(--line-2); border-radius: var(--r);
+  overflow: hidden; background: var(--raised-2); cursor: crosshair; touch-action: none;
+  user-select: none; max-width: 100%; }
+.cleanpad img { display: block; width: 100%; height: auto; pointer-events: none; }
+.cleanpad.previewing { cursor: default; }
+.cleanpad.previewing #cr-clean-boxes { display: none; }
+#cr-clean-boxes { position: absolute; inset: 0; }
+#cr-clean-boxes i { position: absolute; border: 1.5px solid var(--lime); background: rgba(212,242,74,.18);
+  cursor: pointer; }
+#cr-clean-boxes i:hover { border-color: var(--red); background: rgba(255,107,107,.22); }
+#cr-clean-boxes i.drawing { pointer-events: none; border-style: dashed; }
+.cleanrow { display: flex; gap: 8px; }
+.cleanrow .btn { flex: 1; }

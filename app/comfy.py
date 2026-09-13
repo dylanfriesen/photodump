@@ -202,6 +202,12 @@ def build(prompt: str, negative: str, params: dict,
     # than interpolating it. Only meaningful for the reference-free path.
     if mode == "txt2img" and params.get("hires"):
         mode = "txt2img_hires"
+    # The img2img equivalent upscales an already-finished image. Style match
+    # upscales only its last pass: pass 2 re-renders the whole frame at 0.65,
+    # so detail added to pass 1 would be thrown away at twice the cost.
+    if mode == "img2img" and params.get("hires") and not params.get("second_pass"):
+        mode = ("img2img_hires" if params.get("hires_method") == "latent"
+                else "img2img_hires_pixel")
 
     if mode == "wan_i2v":
         return _build_video(prompt, negative, params, ref_name)
@@ -223,9 +229,27 @@ def build(prompt: str, negative: str, params: dict,
     k["cfg"] = float(params.get("cfg", 5.0))
     k["sampler_name"] = params.get("sampler", "euler_ancestral")
 
-    if mode == "img2img":
+    if mode.startswith("img2img"):
         k["denoise"] = float(params.get("denoise", 0.65))
         wf["10"]["inputs"]["image"] = ref_name
+        if mode != "img2img":
+            # Scaled by a factor, not to a size: the source's dimensions are
+            # only known on disk, and LatentUpscaleBy / ImageScaleBy keep
+            # whatever aspect the reference had.
+            up = "30" if mode == "img2img_hires" else "33"
+            wf[up]["inputs"]["scale_by"] = float(params.get("hires_scale", 1.5))
+            second = wf["31"]["inputs"]
+            second["seed"] = seed
+            second["cfg"] = float(params.get("cfg", 5.0))
+            second["steps"] = int(params.get("hires_steps", 20))
+            # Separate defaults per route, and the reason this is not one number:
+            # a bicubic latent upscale is blurry and needs ~0.5 to resolve,
+            # which is the range where the style sweep had already drifted back
+            # to the checkpoint's look. A lanczos pixel upscale stays sharp, so
+            # it can be refined gently enough to keep the rendering.
+            default = 0.45 if mode == "img2img_hires" else 0.35
+            hd = params.get("hires_denoise")
+            second["denoise"] = float(default if hd is None else hd)
     elif mode == "outpaint":
         wf["10"]["inputs"]["image"] = ref_name
         pads = params.get("pads") or {}
@@ -246,7 +270,8 @@ def build(prompt: str, negative: str, params: dict,
             second["cfg"] = float(params.get("cfg", 5.0))
             second["steps"] = int(params.get("hires_steps", 20))
             # Low enough to keep the composition, high enough to add detail.
-            second["denoise"] = float(params.get("hires_denoise", 0.45))
+            hd = params.get("hires_denoise")
+            second["denoise"] = float(0.45 if hd is None else hd)
         if mode in ("ipadapter", "ipadapter_multi"):
             wf["13"]["inputs"]["weight"] = float(params.get("ip_weight", 0.7))
             # "linear" carries the reference's content and palette as well as
@@ -422,6 +447,9 @@ NODE_STAGES = {
     "KSamplerAdvanced": "sampling",
     "VAEDecode": "decoding",
     "VAEEncode": "encoding image",
+    "LatentUpscale": "upscaling",
+    "LatentUpscaleBy": "upscaling",
+    "ImageScaleBy": "upscaling",
     "SaveImage": "saving",
     "SaveWEBM": "encoding video",
     "SaveAnimatedWEBP": "encoding video",

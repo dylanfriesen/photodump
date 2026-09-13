@@ -116,8 +116,36 @@ documented 0.45 → 0.65 / 40-step recipe pending at least two visually inspecte
 outputs per proposed change through `second_pass`; do not count this audit as
 render verification or mark unrun approaches as ruled out.
 
+### Built 2026-09-13 for the open items — NOT yet rendered
+
+Built and tested against the mock only; not one of these has run on the RX
+9070. Each is an experiment waiting for a GPU session, not a recipe. Both
+upscale graphs were checked against the desktop's real `/object_info` (every
+node class and input exists), which proves they will be *accepted*, not that
+they look good.
+
+| Open item | What exists now | What the GPU session has to settle |
+|---|---|---|
+| Lettering | `clean_regions` on img2img: boxes filled out of the reference on kanto before pass 1 (`imageops.fill_regions`). Create has a drag-to-draw pad with an exact preview. | Does a filled reference at 0.45 stop the fake text without leaving a visible smudge? The fill is smooth colour, not texture. |
+| Hair colour | `second_pass_prompt_add` / `second_pass_negative_add`: tags only pass 2 gets. Create shows *pass 2 adds / avoids* when style match is on. | Does `platinum blonde hair` on pass 2 alone reach blonde from 69-style dark hair at 0.65? |
+| Resolution | img2img `hires` tail, **on pass 2 only** when chained. `hires_method: pixel` (default: lanczos 1.5x, re-encode, denoise 0.35) or `latent` (bicubic latent 1.5x, denoise 0.45). Capped at 2.3MP. | Which route keeps the cel shading? Sweep pixel at 0.25 / 0.35 / 0.45 against latent at 0.45 / 0.55; score with `tools/compare.py` **and look**. |
+| 4:5 | Stills deliver as a 1080x1350 q95 JPEG (lightbox → *Make Instagram JPEG*). 680x856 crops 6px; anything >4% off pads. | Nothing — this one runs on kanto and is verified. |
+
+**Why pixel is the default route:** a bicubic latent upscale is blurry and
+needs roughly 0.5 denoise to resolve. The style sweep above showed 0.55 already
+weakening the style, so the latent route is expected to fight the thing it is
+meant to preserve. A lanczos pixel upscale stays sharp and can be refined
+gently. This is reasoning, not a result — the sweep may overturn it.
+
+**Suggested sweep** (ref 4 with the name text, watermark and carousel buttons
+boxed out; `count: 2` per cell): the recipe above plus `hires: true` and
+`second_pass_prompt_add: "platinum blonde hair"`, varying only `hires_method`
+and `hires_denoise`.
+
 ### Implementation
 
 `second_pass` / `second_pass_denoise` in `app/main.py`; the chaining lives in
 `worker._queue_second_pass`, which enqueues pass 2 with `src_image_id` set to
 pass 1's image when pass 1 completes. The Create checkbox is `cr-stylematch`.
+Kanto-side source prep (fill + upscale cap) is `worker._prep_img2img`; the
+upscale graphs are `img2img_hires.json` (latent) and `img2img_hires_pixel.json`.

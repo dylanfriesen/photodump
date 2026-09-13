@@ -16,6 +16,8 @@ import asyncio
 import shlex
 from pathlib import Path
 
+from PIL import Image, ImageOps
+
 from .config import OUT
 
 # 1080 wide is Instagram's ceiling - anything larger is downscaled on upload,
@@ -97,6 +99,67 @@ async def probe(path: Path) -> dict:
         "ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
         "stream=index", "-of", "csv=p=0", str(path)]))
     return d
+
+
+# A still this close to the target ratio is cropped rather than padded. The
+# renders come out 680x856 - 0.794 against 4:5's 0.800 - and six pixels of
+# crop beats two slivers of letterbox. Past this, cropping starts cutting off
+# the subject, so it pads like the video path does.
+STILL_CROP_MAX = 0.04
+
+
+def still_geometry(w: int, h: int, target: str) -> dict:
+    """How a w x h still maps onto a target canvas: crop box, then scale.
+
+    Pure, so the decision can be tested without an image.
+    """
+    tw, th = TARGETS.get(target, TARGETS["feed"])
+    want, have = tw / th, w / h
+    loss = 1 - min(want / have, have / want)
+    if loss <= STILL_CROP_MAX:
+        if have > want:                       # too wide: trim the sides
+            cw, ch = round(h * want), h
+        else:                                 # too tall: trim top and bottom
+            cw, ch = w, round(w / want)
+        x, y = (w - cw) // 2, (h - ch) // 2
+        return {"mode": "crop", "box": [x, y, x + cw, y + ch], "size": [tw, th]}
+    scale = min(tw / w, th / h)
+    fw, fh = round(w * scale), round(h * scale)
+    return {"mode": "pad", "fit": [fw, fh],
+            "offset": [(tw - fw) // 2, (th - fh) // 2], "size": [tw, th]}
+
+
+def deliver_still(src: Path, out_name: str, target: str = "feed") -> dict:
+    """Instagram-ready JPEG from a still. Returns what it did.
+
+    JPEG because Instagram converts everything to it anyway; handing it a
+    q95 sRGB JPEG at its exact size leaves its converter nothing to decide
+    except its own recompression. Scaling to 1080
+    wide is interpolation, not detail - the upscale tail on img2img is what
+    adds real resolution; this only stops Instagram doing the resize itself.
+    """
+    if not src.exists():
+        raise DeliverError(f"{src.name} no longer exists")
+    with Image.open(src) as im:
+        im = ImageOps.exif_transpose(im).convert("RGB")
+    w, h = im.size
+    g = still_geometry(w, h, target)
+    tw, th = g["size"]
+    if g["mode"] == "crop":
+        out = im.crop(tuple(g["box"])).resize((tw, th), Image.LANCZOS)
+    else:
+        out = Image.new("RGB", (tw, th), (0, 0, 0))
+        out.paste(im.resize(tuple(g["fit"]), Image.LANCZOS), tuple(g["offset"]))
+    dst = OUT / out_name
+    out.save(dst, "JPEG", quality=95, subsampling=0, optimize=True)
+    return {
+        "filename": out_name,
+        "target": target,
+        "size": [tw, th],
+        "mode": g["mode"],
+        "bytes": dst.stat().st_size,
+        "upscaled_from": [w, h],
+    }
 
 
 async def deliver(src: Path, out_name: str, target: str = "reel",

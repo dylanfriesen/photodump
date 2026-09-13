@@ -104,6 +104,35 @@
             </select></label>
         </div>
 
+        <div class="f2" id="cr-p2-row" hidden>
+          <label class="f"><span class="cap">pass 2 adds</span>
+            <input id="cr-p2-add" type="text" placeholder="platinum blonde hair" autocomplete="off"></label>
+          <label class="f"><span class="cap">pass 2 avoids</span>
+            <input id="cr-p2-avoid" type="text" placeholder="dark hair, green hair" autocomplete="off"></label>
+        </div>
+
+        <div class="f" id="cr-clean-wrap" hidden>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="cap">clean up the reference</span>
+            <span class="spacer"></span>
+            <span class="meta" id="cr-clean-count"></span>
+          </div>
+          <div id="cr-clean" class="cleanpad">
+            <img id="cr-clean-img" alt="" draggable="false">
+            <div id="cr-clean-boxes"></div>
+          </div>
+          <div class="cleanrow">
+            <button type="button" id="btn-clean-preview" class="btn">Preview fill</button>
+            <button type="button" id="btn-clean-clear" class="btn">Clear boxes</button>
+          </div>
+          <span class="hint">Drag over lettering, logos and app buttons &mdash; img2img copies them as fake text. Click a box to remove it. Keep boxes off the character.</span>
+        </div>
+
+        <label class="check" id="cr-hires-wrap">
+          <input type="checkbox" id="cr-hires"><span class="box"></span>
+          <span>upscale 1.5&times; in a final refine pass</span>
+        </label>
+
         <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end">
           <div class="f"><span class="cap">canvas</span>
             <div id="cr-aspect" class="seg"></div>
@@ -505,16 +534,16 @@
             <a id="lb-download" class="btn" download>Download</a>
             <button id="lb-delete" class="btn danger">Delete</button>
             <button id="lb-animate" class="btn"><span>Animate this still</span></button>
-            <button id="lb-deliver" class="btn" hidden><span>Make Instagram mp4</span></button>
+            <button id="lb-deliver" class="btn"><span>Make Instagram mp4</span></button>
             <button id="lb-reuse" class="btn"><span>Reuse these settings</span></button>
           </div>
           <div id="deliver-box" hidden>
             <div class="head">
               <span class="cap">instagram encode</span>
-              <span class="meta">h.264 · 1080 wide · faststart</span>
+              <span class="meta" id="deliver-meta">h.264 · 1080 wide · faststart</span>
             </div>
             <div class="body">
-              <p class="hint" style="margin:0">Fits and pads — nothing is cropped.</p>
+              <p class="hint" id="deliver-hint" style="margin:0">Fits and pads — nothing is cropped.</p>
               <div class="pickrow">
                 <button class="btn" data-target="reel">Reel 9:16</button>
                 <button class="btn" data-target="feed">Feed 4:5</button>

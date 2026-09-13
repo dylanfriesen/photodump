@@ -264,10 +264,16 @@ async def _run_deliver(job: dict):
     if not row:
         raise comfy.ComfyError("source clip no longer exists")
 
-    name = f"{job['id']}_ig.mp4"
-    info = await deliver.deliver(OUT / row["filename"], name,
-                                 params.get("target", "reel"),
-                                 on_progress=progress.fraction)
+    src = OUT / row["filename"]
+    if src.suffix.lower() in IMAGE_EXT:
+        name = f"{job['id']}_ig.jpg"
+        info = await asyncio.to_thread(deliver.deliver_still, src, name,
+                                       params.get("target", "feed"))
+        _thumb(name)
+    else:
+        name = f"{job['id']}_ig.mp4"
+        info = await deliver.deliver(src, name, params.get("target", "reel"),
+                                     on_progress=progress.fraction)
     params["result"] = info
     with db() as conn:
         conn.execute("INSERT INTO images (job_id, filename, seed) VALUES (?,?,0)",
@@ -298,13 +304,60 @@ def _queue_second_pass(conn, job: dict, params: dict) -> None:
     nxt.pop("second_pass")
     nxt["workflow"] = "img2img"
     nxt["denoise"] = float(params.get("second_pass_denoise", 0.65))
+    # Regions were cleaned out of pass 1's *reference*; pass 1's output has no
+    # lettering to remove, and filling the same boxes again would smear
+    # whatever the render put there instead.
+    nxt.pop("clean_regions", None)
+    nxt.pop("clean_boxes", None)
+    # Pass 2 is where colour gets fixed, so it may want tags pass 1 must not
+    # have: at 0.45, "platinum blonde" against dark source hair gave green.
+    # Appended rather than replacing, so the subject is never retyped.
+    prompt, negative = job["prompt"], job["negative"]
+    add = (nxt.pop("second_pass_prompt_add", "") or "").strip()
+    avoid = (nxt.pop("second_pass_negative_add", "") or "").strip()
+    if add:
+        prompt = f"{prompt}, {add}" if prompt else add
+    if avoid:
+        negative = f"{negative}, {avoid}" if negative else avoid
     conn.execute(
         "INSERT INTO jobs (prompt, negative, params, src_image_id, batch_id, status) "
         "VALUES (?,?,?,?,?, 'queued')",
-        (job["prompt"], job["negative"], json.dumps(nxt),
-         img["id"], job["batch_id"]),
+        (prompt, negative, json.dumps(nxt), img["id"], job["batch_id"]),
     )
     wake()
+
+
+def _prep_img2img(job: dict, params: dict, src: Path) -> Path:
+    """Kanto-side work on an img2img source before it is uploaded.
+
+    Both steps need the real file, which build() never sees: filling
+    lettering out of the reference, and capping an upscale tail so a large
+    source cannot ask the card for more pixels than it has held before.
+    Whatever was resolved is written back, so the job record says what was
+    actually rendered rather than what was asked for.
+    """
+    changed = False
+    if params.get("clean_regions"):
+        dst = DATA / f".clean_{job['id']}.png"
+        params["clean_boxes"] = imageops.fill_regions(src, dst, params["clean_regions"])
+        src, changed = dst, True
+    if params.get("hires") and not params.get("second_pass"):
+        want = float(params.get("hires_scale", 1.5))
+        got = imageops.hires_scale(src, want)
+        if got != want:
+            params["hires_scale_requested"] = want
+            params["hires_scale"] = got
+            changed = True
+        if got <= 1.0:
+            # Already at the cap: a 1.0x tail would re-sample the full frame
+            # for nothing, so render it as plain img2img.
+            params["hires"] = False
+            params["hires_skipped"] = "source already at the upscale pixel cap"
+    if changed:
+        with db() as conn:
+            conn.execute("UPDATE jobs SET params=? WHERE id=?",
+                         (json.dumps(params), job["id"]))
+    return src
 
 
 async def _run(job: dict):
@@ -333,7 +386,10 @@ async def _run(job: dict):
             img = conn.execute("SELECT * FROM images WHERE id=?", (job["src_image_id"],)).fetchone()
         if not img:
             raise comfy.ComfyError("source image no longer exists")
-        ref_name = await comfy.upload_image(OUT / img["filename"])
+        src = OUT / img["filename"]
+        if params.get("workflow") == "img2img":
+            src = await asyncio.to_thread(_prep_img2img, job, params, src)
+        ref_name = await comfy.upload_image(src)
 
     elif job["ref_id"] or job["ref_ids"]:
         # A job may carry several references, in the order they were picked.
@@ -376,6 +432,9 @@ async def _run(job: dict):
                     conn.execute("UPDATE jobs SET params=? WHERE id=?",
                                  (json.dumps(params), job["id"]))
                 src = prepped
+            elif params.get("workflow") in (None, "", "img2img"):
+                # a lone reference with no workflow resolves to img2img in build()
+                src = await asyncio.to_thread(_prep_img2img, job, params, src)
             ref_name = await comfy.upload_image(src)
 
     graph, seed = comfy.build(job["prompt"], job["negative"], params, ref_name)

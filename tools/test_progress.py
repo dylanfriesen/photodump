@@ -79,7 +79,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(worker, 'recover', return_value=0), \
              patch.object(worker, '_claim', AsyncMock(return_value=None)) as claim, \
              patch.object(worker.comfy, 'health', AsyncMock(return_value={'online': False, 'error': 'ComfyUI timed out'})), \
-             patch.object(worker.asyncio, 'sleep', AsyncMock(side_effect=asyncio.CancelledError)), \
+             patch.object(worker, '_idle_wait', AsyncMock(side_effect=asyncio.CancelledError)), \
              patch.dict(worker._state, {}, clear=False):
             with self.assertRaises(asyncio.CancelledError):
                 await worker.loop()

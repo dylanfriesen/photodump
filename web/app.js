@@ -19,6 +19,8 @@ let CURRENT = null;   // item open in the lightbox
 let SELECTED = [];    // ordered shot keys ('image:5' / 'ref:3')
 let REEL_MODE = false;
 let CR_REFS = [];      // ordered reference ids for the Create task
+let CR_REF_ROWS = [];  // the reference records behind the picker
+const CR_CLEAN = {};   // ref id -> [[x, y, w, h], ...] fractions to fill before img2img
 const NODE_CAPS = { has_ipadapter: true };   // until /api/node says otherwise
 let CREATE_BUSY = false;    // a generate request is in flight
 let CREATE_BLOCKED = false; // the resolved workflow cannot run on this node
@@ -93,7 +95,8 @@ function initSeg(el) {
    tool from your phone at all. */
 const REMEMBER = ['subject-a', 'subject-b', 'mode', 'extra', 'negative',
                   'ex-prompt', 're-bpm', 're-beats', 're-seconds',
-                  'cr-prompt', 'cr-negative', 'cr-quality', 'cr-mode'];
+                  'cr-prompt', 'cr-negative', 'cr-quality', 'cr-mode',
+                  'cr-p2-add', 'cr-p2-avoid'];
 const isCheck = (el) => el && el.type === 'checkbox';
 const STORE_KEY = 'photodump.form.v1';
 
@@ -554,6 +557,7 @@ $('ref-grid').onclick = async (e) => {
 
 /* ---------- create: free-form prompt, any number of references ---------- */
 function renderRefPicker(imgs) {
+  CR_REF_ROWS = imgs;
   CR_REFS = CR_REFS.filter((id) => imgs.some((r) => r.id === id));
   $('cr-refs').innerHTML = imgs.length
     ? imgs.map((r) => {
@@ -610,6 +614,10 @@ function syncCreate() {
   $('cr-ipweight-wrap').hidden = !styleMode;
   $('cr-denoise-wrap').hidden = styleMode;
   $('cr-stylematch-wrap').hidden = styleMode;
+  $('cr-p2-row').hidden = styleMode || n === 0 || !$('cr-stylematch').checked;
+  // IP-Adapter graphs have no upscale tail; txt2img and img2img both do.
+  $('cr-hires-wrap').hidden = styleMode;
+  syncClean(mode === 'img2img' && n === 1 ? CR_REFS[0] : null);
   $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
 
   const warn = [];
@@ -672,8 +680,15 @@ function createValues() {
       // Pass 1 must stay low or it re-renders in the checkpoint's own style
       // instead of the reference's; pass 2 is where colour gets corrected.
       body.second_pass = $('cr-stylematch').checked;
+      if (body.second_pass) {
+        body.second_pass_prompt_add = $('cr-p2-add').value.trim();
+        body.second_pass_negative_add = $('cr-p2-avoid').value.trim();
+      }
+      const boxes = CR_CLEAN[CR_REFS[0]] || [];
+      if (mode === 'img2img' && boxes.length) body.clean_regions = boxes;
     }
   }
+  if (!(body.workflow || '').startsWith('ipadapter')) body.hires = $('cr-hires').checked;
   return body;
 }
 
@@ -687,8 +702,12 @@ $('btn-cr-preview').onclick = () => {
     (CR_REFS.length
       ? `\n\n${CR_REFS.length} reference(s) via ${v.workflow} at ` +
         (v.ip_weight !== undefined ? `weight ${v.ip_weight}` : `denoise ${v.denoise}`) +
-        (v.second_pass ? ' + a 2nd colour-correcting pass' : '')
-      : '');
+        (v.second_pass ? ' + a 2nd colour-correcting pass' : '') +
+        (v.second_pass_prompt_add ? `\n  pass 2 adds: ${v.second_pass_prompt_add}` : '') +
+        (v.second_pass_negative_add ? `\n  pass 2 avoids: ${v.second_pass_negative_add}` : '') +
+        (v.clean_regions ? `\n  ${v.clean_regions.length} region(s) filled out of the reference first` : '')
+      : '') +
+    (v.hires ? `\n\nupscaled 1.5\u00d7${v.second_pass ? ' on the final pass' : ''} in a refine pass` : '');
 };
 
 $('btn-create').onclick = async () => {
@@ -716,6 +735,147 @@ $('btn-create').onclick = async () => {
 
 ['cr-count', 'cr-ipweight', 'cr-denoise'].forEach((id) => { $(id).oninput = syncCreate; });
 $('cr-mode').onchange = syncCreate;
+$('cr-stylematch').onchange = syncCreate;
+
+/* ---------- create: clean lettering out of an img2img reference ----------
+   img2img at 0.45 copies everything in the source, so a reference screenshot's
+   name text, watermark and carousel buttons come out as garbled fake text.
+   Boxes are stored as fractions of the image and filled on kanto by the same
+   code the worker runs (imageops.fill_regions), so the preview is exact. */
+let CLEAN_REF = null;     // ref id the pad is showing
+let CLEAN_PREVIEW = null; // object URL while previewing the fill
+let CLEAN_REV = 0;        // bumped on any box or reference change
+let CLEAN_DRAG = null;    // the one pointer allowed to draw
+
+function exitCleanPreview() {
+  if (!CLEAN_PREVIEW) return;
+  URL.revokeObjectURL(CLEAN_PREVIEW);
+  CLEAN_PREVIEW = null;
+  $('cr-clean').classList.remove('previewing');
+  $('btn-clean-preview').textContent = 'Preview fill';
+  const ref = CR_REF_ROWS.find((r) => r.id === CLEAN_REF);
+  if (ref) $('cr-clean-img').src = `/refs/${ref.filename}`;
+}
+
+function syncClean(refId) {
+  $('cr-clean-wrap').hidden = refId === null;
+  if (refId === null) { exitCleanPreview(); CLEAN_REV++; CLEAN_REF = null; return; }
+  if (refId !== CLEAN_REF) {
+    exitCleanPreview();
+    CLEAN_REV++;
+    CLEAN_REF = refId;
+    const ref = CR_REF_ROWS.find((r) => r.id === refId);
+    if (ref) $('cr-clean-img').src = `/refs/${ref.filename}`;
+  }
+  paintCleanBoxes();
+}
+
+function paintCleanBoxes() {
+  const boxes = CR_CLEAN[CLEAN_REF] || [];
+  $('cr-clean-boxes').innerHTML = boxes.map(([x, y, w, h], i) =>
+    `<i data-box="${i}" title="remove" style="left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%"></i>`).join('');
+  $('cr-clean-count').textContent = boxes.length ? `${boxes.length} box${boxes.length > 1 ? 'es' : ''}` : '';
+  $('btn-clean-preview').disabled = !boxes.length && !CLEAN_PREVIEW;
+  $('btn-clean-clear').disabled = !boxes.length;
+}
+
+function padPoint(e) {
+  const r = $('cr-clean').getBoundingClientRect();
+  return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+          Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
+}
+
+$('cr-clean').addEventListener('pointerdown', (e) => {
+  // One drawing pointer at a time: a second finger's events used to finish
+  // the first finger's box too, producing boxes large enough to erase the subject.
+  if (CLEAN_PREVIEW || CLEAN_REF === null || CLEAN_DRAG !== null || e.button > 0) return;
+  const hit = e.target.closest('[data-box]');
+  if (hit) {
+    CR_CLEAN[CLEAN_REF].splice(+hit.dataset.box, 1);
+    CLEAN_REV++;
+    paintCleanBoxes();
+    return;
+  }
+  e.preventDefault();
+  const pad = $('cr-clean');
+  const [x0, y0] = padPoint(e);
+  const refId = CLEAN_REF;
+  CLEAN_DRAG = e.pointerId;
+  // Starting a box already changes what a pending preview would show; a
+  // response landing mid-drag must not be displayed once the box commits.
+  CLEAN_REV++;
+  const ghost = document.createElement('i');
+  ghost.className = 'drawing';
+  $('cr-clean-boxes').append(ghost);
+  pad.setPointerCapture(e.pointerId);
+
+  const rect = (ev) => {
+    const [x1, y1] = padPoint(ev);
+    return [Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)];
+  };
+  const move = (ev) => {
+    if (ev.pointerId !== CLEAN_DRAG) return;
+    const [x, y, w, h] = rect(ev);
+    Object.assign(ghost.style, { left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` });
+  };
+  const up = (ev) => {
+    if (ev.pointerId !== CLEAN_DRAG) return;
+    CLEAN_DRAG = null;
+    pad.removeEventListener('pointermove', move);
+    pad.removeEventListener('pointerup', up);
+    pad.removeEventListener('pointercancel', up);
+    pad.removeEventListener('lostpointercapture', up);
+    ghost.remove();
+    const box = rect(ev);
+    // A click or a tiny slip is not a box - it would fill a pixel-wide sliver.
+    // Nor does a drag count if the reference changed under it.
+    if (ev.type === 'pointerup' && refId === CLEAN_REF && box[2] > 0.01 && box[3] > 0.01) {
+      (CR_CLEAN[refId] ||= []).push(box.map((v) => Math.round(v * 10000) / 10000));
+      CLEAN_REV++;
+    }
+    if (refId === CLEAN_REF) paintCleanBoxes();
+  };
+  pad.addEventListener('pointermove', move);
+  pad.addEventListener('pointerup', up);
+  pad.addEventListener('pointercancel', up);
+  pad.addEventListener('lostpointercapture', up);
+});
+
+$('btn-clean-preview').onclick = async (e) => {
+  if (CLEAN_PREVIEW) { exitCleanPreview(); paintCleanBoxes(); return; }
+  if (CLEAN_DRAG !== null) return;
+  const boxes = CR_CLEAN[CLEAN_REF] || [];
+  if (!boxes.length) return;
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  // Generation uses whatever is selected when Generate is pressed, so a
+  // preview that lands after the boxes or reference changed would show
+  // something that will not be rendered. Such responses are dropped.
+  const rev = CLEAN_REV, refId = CLEAN_REF;
+  try {
+    const r = await fetch(`/api/refs/${refId}/clean-preview`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regions: boxes }),
+    });
+    if (rev !== CLEAN_REV || refId !== CLEAN_REF) return;
+    if (!r.ok) { toast(`Preview failed: ${await r.text()}`, 'bad'); return; }
+    const blob = await r.blob();
+    if (rev !== CLEAN_REV || refId !== CLEAN_REF) return;
+    CLEAN_PREVIEW = URL.createObjectURL(blob);
+    $('cr-clean-img').src = CLEAN_PREVIEW;
+    $('cr-clean').classList.add('previewing');
+    btn.textContent = 'Back to boxes';
+  } finally {
+    btn.disabled = !CLEAN_PREVIEW && !(CR_CLEAN[CLEAN_REF] || []).length;
+  }
+};
+
+$('btn-clean-clear').onclick = () => {
+  exitCleanPreview();
+  CLEAN_REV++;
+  CR_CLEAN[CLEAN_REF] = [];
+  paintCleanBoxes();
+};
 
 /* ---------- gallery ---------- */
 function tileMarkup(i) {
@@ -1098,7 +1258,11 @@ function openLightbox(img) {
   $('lb-vid').hidden = !vid;
   $('animate-box').hidden = true;
   $('lb-animate').hidden = vid;      // a clip is already the output
-  $('lb-deliver').hidden = !vid;     // ...but a clip is what you deliver
+  // Clips and stills both deliver; a still becomes a 1080-wide JPEG.
+  $('lb-deliver').querySelector('span').textContent = vid ? 'Make Instagram mp4' : 'Make Instagram JPEG';
+  $('deliver-meta').textContent = vid ? 'h.264 · 1080 wide · faststart' : 'jpeg q95 · 1080 wide';
+  $('deliver-hint').textContent = vid ? 'Fits and pads — nothing is cropped.'
+    : 'Crops when within 4% of the ratio (a 680×856 render loses 6px), pads otherwise.';
   if (vid) { $('lb-vid').src = `/out/${img.filename}`; $('lb-img').removeAttribute('src'); }
   else { $('lb-img').src = `/out/${img.filename}`; $('lb-vid').removeAttribute('src'); }
 
