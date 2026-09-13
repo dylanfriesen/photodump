@@ -14,6 +14,18 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ## 2026-09-11
 
+**Image recipe evidence audit; render experiments blocked**
+
+Recorded existing output filenames, exact dimensions, and saved parameters in
+RECIPES.md so the next session can resume without mistaking an unrun experiment
+for a failed recipe. The audit caught that output 64 used denoise 0.55, while
+66 and the shipped chain's output 70 used 0.65; all are 680×856. Inspecting
+64/66/70 confirms residual logos, simple backgrounds, and crop-top boundary
+defects. Cost: API/socket and Docker permission checks prevented new rendering
+or deployment, so no quality improvement was established. The img2img latent
+upscale tail and fixes for all four defects remain open; no code or video/LTX
+changes were made.
+
 **Hires fix, and two probe errors corrected**
 
 Added a two-pass detail path: render at the checkpoint's trained resolution,
@@ -436,3 +448,4 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `c5b1764` 2026-09-11 13:38 (dylan) — Wire LTX-2.5 into the video backend; batch render emails per request
 - `4c7a330` 2026-09-11 13:42 (dylan) — Add a hires-fix pass; correct two false 'missing model' findings
 - `71bb641` 2026-09-11 14:26 (dylan) — Solve style matching with a chained two-pass img2img
+- `5981316` 2026-09-11 14:28 (dylan) — Record the image recipe so another session can pick it up

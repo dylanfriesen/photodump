@@ -63,14 +63,58 @@ higher denoise corrects colour while leaving the style intact.
 `data/out/64_1170046077_0.png`, `66_83980300_0.png`, `70_648109459_0.png`
 (job 70 is the chained one-click path, end to end).
 
+**Saved-record audit, 2026-09-11:** these are existing renders, not a new
+experiment. Job parameters were read from the database without modifying it.
+
+| Output in `data/out/` | Source | Denoise | Steps / CFG | Dimensions |
+|---|---|---|---|---|
+| `64_1170046077_0.png` | ref 7, manual colour pass | 0.55 | 40 / 5 | 680×856 |
+| `66_83980300_0.png` | ref 7, manual colour pass | 0.65 | 40 / 5 | 680×856 |
+| `69_1712170323_0.png` | ref 4, chained pass 1 | 0.45 | 40 / 5 | 680×856 |
+| `70_648109459_0.png` | image 69, automatic pass 2 | 0.65 | 40 / 5 | 680×856 |
+
+Do not label 64 as a 0.65 result. Jobs 69/70 used `second_pass: true` and
+`second_pass_denoise: 0.65` on the first job; the second job records
+`src_image_id: 69`. Future paired experiments must use this shipped chain.
+Both chained jobs saved the same prompt and negative; the chain does not
+automatically add stronger hair-colour tags for pass 2 (`worker._queue_second_pass`).
+
 ### Still open
 
 - Garbled fake lettering inherited from the reference's text regions. Much
   reduced by pass 2 but not gone; text/watermark negatives do not clear it.
-- Backgrounds come out plainer than the reference's layered composition.
-- Output caps around 680x850: **zero upscale models and zero LoRAs are
-  installed.** That is also why portrait stills sit outside Instagram's 4:5
-  limit and the delivery pass rejects them.
+  Visual evidence: `data/out/64_1170046077_0.png` and
+  `data/out/66_83980300_0.png` retain large left-edge lettering and a
+  bottom-left logo. `data/out/70_648109459_0.png` still has a bottom-left
+  R badge with tiny fake lettering. No new text-removal treatment was tested.
+- Backgrounds remain simple: black plus red drapery in
+  `data/out/64_1170046077_0.png` and `data/out/66_83980300_0.png`; broad dark
+  teal and orange shapes in `data/out/70_648109459_0.png`. No new background
+  treatment was tested.
+- Resolution: all four outputs in the table are **680×856**, as verified
+  from their PNG headers. **Zero image upscale models and zero LoRAs are
+  installed.** Code inspection of `app/comfy.py:build` shows that `hires`
+  selects a latent-upscale tail only for txt2img; img2img currently ignores
+  that flag. An equivalent img2img tail remains **untested**, including
+  whether it preserves cel shading. The earlier failure to create style
+  with hires does not establish that hires destroys an already styled source.
+  Scaling both dimensions equally also leaves the aspect ratio unchanged;
+  680/856 is slightly below 4:5. Resolution and aspect correction are separate.
+- Crop-top anatomy/garment boundary: uneven under-bust contours and hem
+  openings remain visible in `data/out/64_1170046077_0.png`,
+  `data/out/66_83980300_0.png`, and `data/out/70_648109459_0.png`. No anatomy
+  correction was tested; retain this as a separate evaluation criterion.
+
+**Experiment blocker, 2026-09-11:** this session could inspect existing images
+and saved job metadata, but socket creation for both the local app and desktop
+ComfyUI failed with `PermissionError: [Errno 1] Operation not permitted`.
+Docker socket access was also denied. This is a session permission failure,
+not evidence that ComfyUI is offline or a recipe failed. No new generations,
+parameter sweeps, code changes, or rebuilds were performed. There are no new
+output filenames supporting a fix for any of the four defects. Keep the
+documented 0.45 → 0.65 / 40-step recipe pending at least two visually inspected
+outputs per proposed change through `second_pass`; do not count this audit as
+render verification or mark unrun approaches as ruled out.
 
 ### Implementation
 
