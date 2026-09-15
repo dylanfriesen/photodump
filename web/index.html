@@ -477,6 +477,21 @@
             <span class="wave"><i style="height:5px"></i><i style="height:11px"></i><i style="height:7px"></i><i style="height:13px"></i><i style="height:4px"></i><i style="height:9px"></i></span>
             <select id="re-audio"></select>
           </span></label>
+        <label class="f" id="re-audio-start-row" hidden><span class="cap">start the track at</span>
+          <input id="re-audio-start" class="mono-in" type="number" step="0.5" min="0" value="0">
+          <span class="hint">Seconds into the song, so the first cut lands on the drop, not the intro.</span></label>
+
+        <label class="f"><span class="cap">hook line</span>
+          <input id="re-hook" type="text" maxlength="90" placeholder="optional · e.g. what if Gojo joined Team Rocket" autocomplete="off"></label>
+        <div class="f2" id="re-hook-row" hidden>
+          <label class="f"><span class="cap">show for</span>
+            <input id="re-hook-secs" class="mono-in" type="number" step="0.5" min="0.5" max="15" value="2.5"></label>
+          <span class="hint" style="align-self:end">Burned in over the opening, clear of Instagram's own caption and buttons.</span>
+        </div>
+
+        <label class="f"><span class="cap">cover still</span>
+          <select id="re-cover"><option value="">none</option></select>
+          <span class="hint">A 1080&times;1920 JPEG of one shot, with the hook, to upload as the reel's cover.</span></label>
 
         <div id="re-length"></div>
 
@@ -484,6 +499,15 @@
           <div class="row2">
             <button id="btn-reel" class="btn teal wide">
               <span>Build reel</span><span class="note">server-side · builds now</span>
+            </button>
+          </div>
+          <div class="row2 carousel-row">
+            <div id="re-carousel-target" class="seg sans" aria-label="carousel size">
+              <span data-value="feed" class="on">4:5</span>
+              <span data-value="square">1:1</span>
+            </div>
+            <button id="btn-carousel" class="btn">
+              <span>Export as carousel</span><span class="note">JPEG slides</span>
             </button>
           </div>
         </div>

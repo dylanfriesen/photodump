@@ -116,7 +116,7 @@ async def _claim(local: bool = False):
             return None
         row = conn.execute(
             "SELECT * FROM jobs WHERE status='queued' "
-            f"AND COALESCE(json_extract(params, '$.workflow'), '') {op} ('reel','deliver') "
+            f"AND COALESCE(json_extract(params, '$.workflow'), '') {op} ('reel','deliver','carousel') "
             "AND (not_before IS NULL OR not_before <= datetime('now')) "
             "ORDER BY id LIMIT 1"
         ).fetchone()
@@ -214,19 +214,7 @@ async def _run_reel(job: dict):
     if not shots:
         shots = [{"src": "image", "id": i} for i in (params.get("image_ids") or [])]
 
-    paths = []
-    with db() as conn:
-        for shot in shots:
-            sid = shot.get("id")
-            if shot.get("src") == "ref":
-                row = conn.execute("SELECT * FROM refs WHERE id=?", (sid,)).fetchone()
-                if row and row["kind"] != "audio":
-                    paths.append(REFS / row["filename"])
-            else:
-                row = conn.execute("SELECT * FROM images WHERE id=?", (sid,)).fetchone()
-                if row and not row["filename"].lower().endswith((".webm", ".mp4")):
-                    paths.append(OUT / row["filename"])
-    paths = [p for p in paths if p.exists()]
+    paths = _shot_paths(shots)
     if len(paths) < 2:
         raise comfy.ComfyError("need at least two usable stills for a reel")
 
@@ -238,6 +226,7 @@ async def _run_reel(job: dict):
             audio = REFS / a["filename"]
 
     name = f"{job['id']}_reel.mp4"
+    hook = str(params.get("hook") or "")
     await reels.build(
         paths, name,
         on_progress=progress.fraction,
@@ -247,10 +236,68 @@ async def _run_reel(job: dict):
         motion=params.get("motion", "kenburns"),
         transition=params.get("transition", "cut"),
         audio=audio,
+        audio_start=float(params.get("audio_start") or 0),
+        hook=hook,
+        hook_seconds=float(params.get("hook_seconds") or 2.5),
     )
+    outputs = [name]
+    # The cover is its own still, so it can be uploaded as the reel's cover
+    # and emailed with it. Only made when asked for: most reels don't need one.
+    at = params.get("cover_shot")
+    if at is not None and 0 <= int(at) < len(paths):
+        cover_name = f"{job['id']}_reel_cover.jpg"
+        await asyncio.to_thread(reels.cover, paths[int(at)], cover_name, hook)
+        _thumb(cover_name)
+        outputs.append(cover_name)
     with db() as conn:
-        conn.execute("INSERT INTO images (job_id, filename, seed) VALUES (?,?,0)",
-                     (job["id"], name))
+        for out in outputs:
+            conn.execute("INSERT INTO images (job_id, filename, seed) VALUES (?,?,0)",
+                         (job["id"], out))
+        conn.execute("UPDATE jobs SET status='done', finished_at=datetime('now') WHERE id=?",
+                     (job["id"],))
+
+
+def _shot_paths(shots: list) -> list[Path]:
+    """Resolve {src, id} shots to still files that exist, in order."""
+    paths = []
+    with db() as conn:
+        for shot in shots:
+            sid = shot.get("id")
+            if shot.get("src") == "ref":
+                row = conn.execute("SELECT * FROM refs WHERE id=?", (sid,)).fetchone()
+                if row and row["kind"] != "audio":
+                    paths.append(REFS / row["filename"])
+            else:
+                row = conn.execute("SELECT * FROM images WHERE id=?", (sid,)).fetchone()
+                if row and Path(row["filename"]).suffix.lower() in IMAGE_EXT:
+                    paths.append(OUT / row["filename"])
+    return [p for p in paths if p.exists()]
+
+
+async def _run_carousel(job: dict):
+    """Instagram carousel: every picked still as a same-size JPEG, in order.
+
+    A carousel crops every slide to the first slide's ratio, so mixed 4:5 and
+    1:1 slides get cut on upload. One target for the whole set avoids that.
+    Filenames carry the slide number, so the email and a download sort in
+    posting order.
+    """
+    params = loads(job["params"])
+    paths = _shot_paths(params.get("shots") or [])
+    if not paths:
+        raise comfy.ComfyError("none of the picked stills still exist")
+    target = params.get("target", "feed")
+    names = []
+    for i, src in enumerate(paths):
+        progress.fraction(i / len(paths), stage=f"slide {i + 1} of {len(paths)}")
+        name = f"{job['id']}_slide{i + 1:02d}_ig.jpg"
+        await asyncio.to_thread(deliver.deliver_still, src, name, target)
+        _thumb(name)
+        names.append(name)
+    with db() as conn:
+        for name in names:
+            conn.execute("INSERT INTO images (job_id, filename, seed) VALUES (?,?,0)",
+                         (job["id"], name))
         conn.execute("UPDATE jobs SET status='done', finished_at=datetime('now') WHERE id=?",
                      (job["id"],))
 
@@ -667,6 +714,8 @@ async def loop():
             try:
                 if kind == "deliver":
                     await _run_deliver(job)
+                elif kind == "carousel":
+                    await _run_carousel(job)
                 else:
                     await _run_reel(job)
                 _state["last_error"] = ""

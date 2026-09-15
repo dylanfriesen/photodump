@@ -656,6 +656,9 @@ select option { background: var(--input); color: var(--ink); }
 /* ---------- action bar (pinned above the nav on mobile) ---------- */
 .actionbar { display: flex; flex-direction: column; gap: 6px; }
 .actionbar .row2 { display: flex; gap: 8px; }
+.actionbar .carousel-row .seg { flex: none; width: 112px; }
+.actionbar .carousel-row .seg span { flex: 1; text-align: center; }
+.actionbar .carousel-row .btn { flex: 1; }
 .actionbar .hint { margin: 0; }
 
 /* ---------- mobile bottom navigation ---------- */
@@ -718,6 +721,12 @@ select option { background: var(--input); color: var(--ink); }
   }
   .actionbar .btn { min-height: 46px; font-size: 14.5px; font-weight: 600; }
   body[data-screen="studio"] .studio-body { padding-bottom: 96px; }
+  /* Reel's bar carries a second, secondary row (carousel export): keep it
+     one short line so the pinned bar does not eat the panel. */
+  body[data-screen="studio"] .task[data-task="reel"] { padding-bottom: 48px; }
+  .actionbar .carousel-row .btn { min-height: 38px; font-size: 13px; font-weight: 500; }
+  .actionbar .carousel-row .btn .note { display: none; }
+  .actionbar .carousel-row .seg span { padding-block: 6px; }
 
   #grid { grid-template-columns: repeat(2, 1fr); padding: 0 16px 16px; column-gap: 12px; }
   #grid figcaption { font-size: 10.5px; }

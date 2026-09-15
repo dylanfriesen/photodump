@@ -1,9 +1,10 @@
 FROM python:3.12-slim
 
 # ffmpeg drives the reel assembler; it runs on kanto's CPU so reels build
-# even while the desktop render node is asleep.
+# even while the desktop render node is asleep. The font is for reel hook
+# lines and covers - the slim image ships none.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg \
+ && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv

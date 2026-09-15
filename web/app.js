@@ -62,7 +62,7 @@ async function queue(url, payload, describe) {
     return null;
   }
   const ids = body.queued || [];
-  const local = url === '/api/reels' || url.endsWith('/deliver');
+  const local = url === '/api/reels' || url === '/api/carousel' || url.endsWith('/deliver');
   const where = NODE.online || local ? '' : ' — waiting for ComfyUI to reconnect';
   toast(`${describe(ids)}${where}`, local || !NODE.online ? 'teal' : 'ok');
   refreshJobs();
@@ -161,7 +161,7 @@ async function boot() {
     .map((a, i) => `<span data-value="${esc(a)}" class="${i === 0 ? 'on' : ''}">${esc(ratio[a] || a)}</span>`).join('');
 
   $('cr-aspect').innerHTML = $('aspect').innerHTML;
-  ['aspect', 'cr-aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source', 'an-backend', 'an-size']
+  ['aspect', 'cr-aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source', 're-carousel-target', 'an-backend', 'an-size']
     .forEach((id) => initSeg($(id)));
   $('cr-quality-sample').textContent = `${body.quality.split(',').slice(0, 3).join(',')}…`;
 
@@ -1186,6 +1186,12 @@ function syncSelection() {
        <span class="ticks">${'<i></i>'.repeat(Math.min(n, 8))}</span>`
     : '<span>Pick stills in the gallery to see the length.</span>';
 
+  // Cover choices follow the cut order; keep the pick while it still exists.
+  const cover = $('re-cover').value;
+  $('re-cover').innerHTML = '<option value="">none</option>' +
+    SELECTED.map((_, k) => `<option value="${k}">shot ${k + 1}</option>`).join('');
+  if (cover !== '' && +cover < n) $('re-cover').value = cover;
+
   $('picking-count').textContent = `${n} / ${IMAGES.filter((i) => !isVideo(i.filename)).length} picked`;
   $('strip').hidden = !REEL_MODE || n === 0;
   if (REEL_MODE && n) {
@@ -1222,6 +1228,8 @@ $('re-timing').onchange = () => {
 ['re-bpm', 're-beats', 're-seconds'].forEach((id) => { $(id).oninput = syncSelection; });
 $('re-source').onchange = () => { refreshGallery(); };
 $('re-transition').onchange = syncSelection;
+$('re-audio').onchange = () => { $('re-audio-start-row').hidden = !$('re-audio').value; };
+$('re-hook').oninput = () => { $('re-hook-row').hidden = !$('re-hook').value.trim(); };
 
 $('sel-clear').onclick = () => { SELECTED = []; syncSelection(); refreshGallery(); };
 
@@ -1249,12 +1257,35 @@ async function buildReel(btn) {
     motion: $('re-motion').value,
     transition: $('re-transition').value,
     audio_ref_id: $('re-audio').value ? +$('re-audio').value : null,
+    audio_start: $('re-audio').value ? (+$('re-audio-start').value || 0) : 0,
+    hook: $('re-hook').value.trim(),
+    hook_seconds: +$('re-hook-secs').value || 2.5,
+    cover_shot: $('re-cover').value === '' ? null : +$('re-cover').value,
   }, () => `Building a ${SELECTED.length}-shot reel now`);
   btn.disabled = false;
   if (body) switchTab('queue');
 }
 $('btn-reel').onclick = (e) => buildReel(e.currentTarget);
 document.querySelector('[data-build-reel]').onclick = (e) => buildReel(e.currentTarget);
+
+/* A carousel uses the same picked stills as a reel, exported as slides. */
+$('btn-carousel').onclick = async (e) => {
+  if (!SELECTED.length) {
+    toast('Pick the stills in the gallery first, in slide order.', 'bad');
+    if (isMobile()) switchTab('gallery');
+    return;
+  }
+  if (SELECTED.length > 20) { toast('Instagram carousels hold at most 20 slides.', 'bad'); return; }
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const target = $('re-carousel-target').value;
+  const body = await queue('/api/carousel', {
+    shots: SELECTED.map((k) => { const [src, id] = k.split(':'); return { src, id: +id }; }),
+    target,
+  }, () => `Exporting ${SELECTED.length} ${target === 'square' ? '1:1' : '4:5'} carousel slides now`);
+  btn.disabled = false;
+  if (body) switchTab('queue');
+};
 
 /* ---------- extend ---------- */
 $('btn-extend').onclick = async (e) => {
@@ -1312,13 +1343,14 @@ function whenLocal(t) {
   return `${label} ${hhmm(d)} · ${String(t).slice(0, 16)} UTC`;
 }
 
-const SERVER_SIDE = new Set(['reel', 'deliver']);
+const SERVER_SIDE = new Set(['reel', 'deliver', 'carousel']);
 const parseParams = (j) => { try { return JSON.parse(j.params); } catch { return {}; } };
 
 function jobKind(params) {
   const w = params.workflow;
   if (w === 'reel') return 'reel';
   if (w === 'deliver') return 'Instagram encode';
+  if (w === 'carousel') return 'carousel';
   if (w === 'outpaint') return 'extend';
   if (w === 'wan_i2v') return params.video_backend === 'ltx' ? 'animate · LTX' : 'animate';
   return params.free_prompt ? 'create' : 'fuse';

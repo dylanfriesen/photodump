@@ -472,6 +472,12 @@ async def api_reel(payload: dict):
         "motion": payload.get("motion", "kenburns"),
         "transition": payload.get("transition", "cut"),
         "audio_ref_id": payload.get("audio_ref_id"),
+        "audio_start": max(0.0, float(payload.get("audio_start") or 0)),
+        "hook": " ".join(str(payload.get("hook") or "").split())[:reels.HOOK_MAX],
+        "hook_seconds": max(0.5, min(float(payload.get("hook_seconds") or 2.5), 15.0)),
+        # Index into `shots`; None means no cover still.
+        "cover_shot": (int(payload["cover_shot"]) if payload.get("cover_shot") is not None
+                       and 0 <= int(payload["cover_shot"]) < len(shots) else None),
     }
     ids = shots
     shot = reels.shot_seconds(params["bpm"], params["beats_per_shot"], params["seconds"])
@@ -483,6 +489,31 @@ async def api_reel(payload: dict):
     worker.wake()
     return {"queued": [cur.lastrowid], "shot_seconds": round(shot, 3),
             "total_seconds": round(reels.total_seconds(shot, len(ids), params["transition"]), 2)}
+
+
+@app.post("/api/carousel")
+async def api_carousel(payload: dict):
+    """Queue a carousel export: the picked stills as same-size Instagram JPEGs.
+
+    Local like reels, so it runs with the desktop asleep.
+    """
+    shots = [{"src": "ref" if s.get("src") == "ref" else "image", "id": int(s["id"])}
+             for s in (payload.get("shots") or [])]
+    if not shots:
+        raise HTTPException(400, "pick at least one still")
+    if len(shots) > 20:
+        raise HTTPException(400, "Instagram carousels hold at most 20 slides")
+    target = payload.get("target", "feed")
+    if target not in ("feed", "square"):
+        raise HTTPException(400, "carousel target must be 'feed' (4:5) or 'square'")
+    params = {"workflow": "carousel", "shots": shots, "target": target}
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO jobs (prompt, negative, params) VALUES (?,?,?)",
+            (f"carousel of {len(shots)} slides", "", json.dumps(params)))
+    worker.wake()
+    return {"queued": [cur.lastrowid], "slides": len(shots),
+            "size": deliver.TARGETS[target]}
 
 
 @app.post("/api/images/{image_id}/deliver")
