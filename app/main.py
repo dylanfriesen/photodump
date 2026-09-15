@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import shutil
 import tempfile
 import uuid
@@ -11,7 +12,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import captions, comfy, deliver, imageops, preflight, reels, worker
+from . import captions, comfy, deliver, imageops, preflight, reels, score, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
 from .db import db, init, loads, rows, set_setting
 from .prompts import (MODES, QUALITY, STARTERS, compile_negative, compile_parts,
@@ -180,6 +181,43 @@ def _regions(raw) -> list:
 @app.post("/api/generate")
 async def api_generate(payload: dict):
     count = max(1, min(int(payload.get("count", 1)), 8))
+    prompt, negative, params, ref_ids = _prepare(payload)
+    ids = []
+    # count=N creates N single-image jobs. They share a batch id so the mailer
+    # can send the whole request as one email rather than N of them.
+    batch = uuid.uuid4().hex
+    with db() as conn:
+        for i in range(count):
+            ids.append(_insert_job(conn, payload, prompt, negative, _seeded(params, i),
+                                   ref_ids, batch))
+    worker.wake()
+    return {"queued": ids, "node": worker.status()}
+
+
+def _seeded(params: dict, offset: int) -> dict:
+    """A fixed seed stays distinct across a count=N batch: seed, seed+1, ..."""
+    if not params.get("seed"):
+        return params
+    return {**params, "seed": (params["seed"] + offset) % (2**31 - 1) or 1}
+
+
+def _insert_job(conn, payload, prompt, negative, params, ref_ids, batch) -> int:
+    cur = conn.execute(
+        "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, ref_ids, "
+        "src_image_id, batch_id) VALUES (?,?,?,?,?,?,?,?)",
+        (payload.get("recipe_id"), prompt, negative, json.dumps(params),
+         ref_ids[0] if ref_ids else None, json.dumps(ref_ids),
+         payload.get("src_image_id"), batch),
+    )
+    return cur.lastrowid
+
+
+def _prepare(payload: dict):
+    """Validate a generate payload and resolve it to what gets stored.
+
+    Raises HTTPException before anything is written, so a sweep can validate
+    every cell first and never leave half a grid in the queue.
+    """
     # A free-form prompt wins outright. Only the Fuse task compiles one from
     # subject_a/subject_b - everything else says what it wants directly.
     free = (payload.get("prompt") or "").strip()
@@ -229,6 +267,9 @@ async def api_generate(payload: dict):
         "clean_regions": _regions(payload.get("clean_regions")),
         "seconds": float(payload.get("seconds", 3)),
         "fps": int(payload.get("fps", 16)),
+        # Fixed seed, for comparisons. None means build() picks one at random.
+        "seed": (int(payload["seed"]) if payload.get("seed") and int(payload["seed"]) > 0
+                 else None),
         # Kept so a caption can be drafted from what this image actually is,
         # months later, rather than from whatever the form happens to say.
         "recipe": {
@@ -265,23 +306,148 @@ async def api_generate(payload: dict):
                  "upscaling is `hires: true`, not a workflow name")
     if params["hires_method"] not in ("pixel", "latent"):
         raise HTTPException(400, "hires_method must be 'pixel' or 'latent'")
+    return prompt, negative, params, ref_ids
 
-    ids = []
-    # count=N creates N single-image jobs. They share a batch id so the mailer
-    # can send the whole request as one email rather than N of them.
+
+# ---------- sweeps ----------
+#
+# A sweep is a parameter grid queued as one request: every cell x every seed,
+# one batch (so the mailer sends one email), each job tagged with
+# params.sweep = {name, cell}. Style-match pass 2 copies params, so the tag
+# follows the chain and the results page can pair each pass with its source.
+#
+# Seeds are fixed and shared across cells. Without that, two cells differ by
+# their parameter *and* their random seed, and a sweep cannot say which one
+# made the difference.
+
+SWEEP_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+@app.post("/api/sweeps")
+async def api_sweep(payload: dict):
+    name = str(payload.get("name") or "").strip()
+    if not SWEEP_NAME.match(name):
+        raise HTTPException(400, "name must be 1-64 of a-z 0-9 . _ - (lowercase)")
+    base = payload.get("base") or {}
+    cells = payload.get("cells") or []
+    seeds = [int(s) for s in (payload.get("seeds") or []) if int(s) > 0]
+    if not cells or not seeds:
+        raise HTTPException(400, "a sweep needs at least one cell and one seed")
+    if len(cells) * len(seeds) > 48:
+        raise HTTPException(400, "a sweep is capped at 48 first-pass jobs")
+    labels = [str(c.get("label") or "").strip() for c in cells]
+    if not all(labels) or len(set(labels)) != len(labels):
+        raise HTTPException(400, "every cell needs a unique label")
+    with db() as conn:
+        taken = conn.execute(
+            "SELECT 1 FROM jobs WHERE json_extract(params, '$.sweep.name')=? LIMIT 1",
+            (name,)).fetchone()
+    if taken:
+        raise HTTPException(409, f"sweep {name!r} already exists; pick a new name")
+
+    planned = []
+    for label, cell in zip(labels, cells):
+        body = {**base, **(cell.get("set") or {}), "count": 1}
+        prompt, negative, params, ref_ids = _prepare(body)      # all validated first
+        for seed in seeds:
+            p = {**params, "seed": seed,
+                 "sweep": {"name": name, "cell": label, "set": cell.get("set") or {}}}
+            planned.append((body, prompt, negative, p, ref_ids))
+
     batch = uuid.uuid4().hex
     with db() as conn:
-        for _ in range(count):
-            cur = conn.execute(
-                "INSERT INTO jobs (recipe_id, prompt, negative, params, ref_id, ref_ids, "
-                "src_image_id, batch_id) VALUES (?,?,?,?,?,?,?,?)",
-                (payload.get("recipe_id"), prompt, negative, json.dumps(params),
-                 ref_ids[0] if ref_ids else None, json.dumps(ref_ids),
-                 payload.get("src_image_id"), batch),
-            )
-            ids.append(cur.lastrowid)
+        ids = [_insert_job(conn, *row, batch) for row in planned]
+        hold = payload.get("not_before")
+        if hold:
+            when = _utc(hold)
+            conn.execute(
+                f"UPDATE jobs SET not_before=? WHERE id IN ({','.join('?' * len(ids))})",
+                (when, *ids))
     worker.wake()
-    return {"queued": ids, "node": worker.status()}
+    return {"name": name, "queued": ids, "cells": len(cells), "seeds": seeds}
+
+
+@app.get("/api/sweeps")
+async def api_sweeps():
+    with db() as conn:
+        return rows(conn.execute(
+            "SELECT json_extract(params, '$.sweep.name') AS name, "
+            " MIN(created_at) AS created_at, COUNT(*) AS jobs, "
+            " SUM(status='done') AS done, SUM(status IN ('queued','running','paused')) AS pending, "
+            " SUM(status IN ('failed','cancelled')) AS failed "
+            "FROM jobs WHERE json_extract(params, '$.sweep.name') IS NOT NULL "
+            "GROUP BY name ORDER BY MIN(id) DESC"))
+
+
+@app.get("/api/sweeps/{name}")
+async def api_sweep_results(name: str):
+    """Every cell's renders, pass 1 beside its pass 2, scored against the reference."""
+    with db() as conn:
+        jobs = rows(conn.execute(
+            "SELECT id, status, error, params, ref_ids, src_image_id, created_at, finished_at "
+            "FROM jobs WHERE json_extract(params, '$.sweep.name')=? ORDER BY id", (name,)))
+        if not jobs:
+            raise HTTPException(404, "no such sweep")
+        ids = [j["id"] for j in jobs]
+        images = rows(conn.execute(
+            f"SELECT id, job_id, filename, seed FROM images WHERE job_id IN "
+            f"({','.join('?' * len(ids))}) ORDER BY id", ids))
+        ref_ids = next((loads(j["ref_ids"], []) for j in jobs if loads(j["ref_ids"], [])), [])
+        ref = conn.execute("SELECT id, filename, label FROM refs WHERE id=?",
+                           (ref_ids[0],)).fetchone() if ref_ids else None
+
+    by_job = {}
+    for im in images:
+        by_job.setdefault(im["job_id"], []).append(im)
+    image_job = {im["id"]: im["job_id"] for im in images}
+    ref_metrics = score.cached(REFS / ref["filename"]) if ref else None
+
+    def render(job):
+        ims = by_job.get(job["id"]) or []
+        out = []
+        for im in ims:
+            m = score.cached(OUT / im["filename"]) if (OUT / im["filename"]).exists() else None
+            out.append({**im, "metrics": m,
+                        "distance": score.distance(ref_metrics, m) if ref_metrics and m else None})
+        return {"id": job["id"], "status": job["status"], "error": job["error"],
+                "seed": loads(job["params"]).get("seed"), "images": out}
+
+    cells = {}
+    for job in jobs:
+        p = loads(job["params"])
+        cell = cells.setdefault(p["sweep"]["cell"], {
+            "label": p["sweep"]["cell"], "set": p["sweep"].get("set") or {}, "runs": []})
+        parent = image_job.get(job["src_image_id"])
+        if parent:
+            # A pass 2: attach it to the run whose output it started from.
+            for run in cell["runs"]:
+                if run["pass1"]["id"] == parent:
+                    run["pass2"] = render(job)
+                    break
+            else:
+                cell["runs"].append({"pass1": render(job), "pass2": None})
+        else:
+            cell["runs"].append({"pass1": render(job), "pass2": None})
+
+    return {
+        "name": name,
+        # Pass 1 carries the flag; its pass 2 has it popped. A chained sweep is
+        # judged on pass 2, and its pass 2 slots show as pending until they exist.
+        "chained": any(loads(j["params"]).get("second_pass") for j in jobs),
+        "reference": dict(ref) | {"metrics": ref_metrics} if ref else None,
+        "cells": list(cells.values()),
+        "axes": score.AXES,
+    }
+
+
+def _utc(raw) -> str:
+    text = str(raw).strip().replace("T", " ").replace("Z", "")
+    for fmt, n in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16)):
+        try:
+            return datetime.strptime(text[:n], fmt).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    raise HTTPException(400, "not_before must be UTC 'YYYY-MM-DD HH:MM[:SS]'")
 
 
 # ---------- reels ----------
@@ -442,16 +608,7 @@ async def api_schedule(job_id: int, payload: dict):
     parsed and normalised rather than trusted.
     """
     raw = payload.get("not_before")
-    when = None
-    if raw not in (None, ""):
-        text = str(raw).strip().replace("T", " ").replace("Z", "")
-        try:
-            when = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            try:
-                when = datetime.strptime(text[:16], "%Y-%m-%d %H:%M")
-            except ValueError:
-                raise HTTPException(400, "not_before must be UTC 'YYYY-MM-DD HH:MM[:SS]'")
+    when = _utc(raw) if raw not in (None, "") else None
     with db() as conn:
         row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
         if not row:
@@ -459,10 +616,8 @@ async def api_schedule(job_id: int, payload: dict):
         if row["status"] not in ("queued", "paused"):
             raise HTTPException(400, f"cannot schedule a {row['status']} job")
         conn.execute(
-            "UPDATE jobs SET not_before=?, status='queued' WHERE id=?",
-            (when.strftime("%Y-%m-%d %H:%M:%S") if when else None, job_id),
-        )
-    return {"ok": True, "not_before": when.strftime("%Y-%m-%d %H:%M:%S") if when else None}
+            "UPDATE jobs SET not_before=?, status='queued' WHERE id=?", (when, job_id))
+    return {"ok": True, "not_before": when}
 
 
 @app.post("/api/queue/pause")

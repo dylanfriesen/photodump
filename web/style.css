@@ -79,6 +79,10 @@ header {
 }
 .spacer { flex: 1; }
 .who { font-family: var(--mono); font-size: 10.5px; color: var(--mute-5); }
+/* Sits where the design drew a "settings" link; there is no settings screen,
+   and the sweep results page is the one place the header needs to reach. */
+.head-link { font-family: var(--mono); font-size: 10.5px; color: var(--mute-2); text-decoration: none; }
+.head-link:hover { color: var(--lime); }
 
 /* ---------- shell ---------- */
 .shell { flex: 1; min-height: 0; display: flex; position: relative; }
@@ -663,7 +667,7 @@ select option { background: var(--input); color: var(--ink); }
   /* Screens scroll internally; the shell itself never does. */
   body { overflow: hidden; height: 100dvh; }
   header { height: 46px; padding: 0 16px; }
-  header .tagchip, header .who { display: none; }
+  header .tagchip, header .who, header .head-vr { display: none; }
 
   .shell { flex-direction: column; min-height: 0; }
 

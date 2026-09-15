@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>photodump · sweeps</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  /* The studio shell pins the body and scrolls panels; this page is one
+     long document, so it scrolls the body instead. */
+  html, body { height: auto; }
+  body { display: block; overflow: auto; min-height: 100dvh; }
+  header { position: sticky; top: 0; }
+  header a.back { font-family: var(--mono); font-size: 10.5px; color: var(--mute-2); text-decoration: none; }
+  header a.back:hover { color: var(--lime); }
+  @media (max-width: 900px) { body { overflow: auto; height: auto; } header .tagchip { display: inline; } }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 22px 18px 60px; display: flex; flex-direction: column; gap: 22px; }
+  .picker { display: flex; flex-wrap: wrap; gap: 8px; }
+  .picker button {
+    font: 500 12px var(--sans); color: var(--ink-2); background: var(--raised); cursor: pointer;
+    border: 1px solid var(--line-2); border-radius: var(--r); padding: 8px 12px; display: flex; gap: 10px; align-items: baseline;
+  }
+  .picker button.on { border-color: rgba(212,242,74,.5); color: var(--ink-hi); }
+  .picker .n { font: 500 10px var(--mono); color: var(--mute-3); }
+
+  .lead { display: grid; grid-template-columns: 220px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 700px) { .lead { grid-template-columns: 1fr; } }
+  .refcard { background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; }
+  .refcard img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+  .refcard .body { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .summary { display: flex; flex-direction: column; gap: 12px; }
+  .summary h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.02em; color: var(--ink-hi); }
+  .summary p { margin: 0; color: var(--mute); max-width: 70ch; }
+  .bar { height: 3px; background: rgba(255,255,255,.06); border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--lime); }
+  .bar.waiting i { background: var(--violet); }
+
+  table.rank { border-collapse: collapse; font-size: 12px; min-width: 520px; }
+  .scroll { overflow-x: auto; }
+  table.rank th { font: 500 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--mute-3); text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); }
+  table.rank td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+  table.rank td.num { font-family: var(--mono); text-align: right; }
+  table.rank tr.best td { color: var(--lime); }
+
+  .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+  .cell-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .cell-head h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink-hi); }
+  .chip { font: 500 10px var(--mono); color: var(--teal-soft); background: rgba(79,214,192,.08); border: 1px solid rgba(79,214,192,.2); border-radius: var(--r-sm); padding: 2px 6px; }
+  .runs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; padding: 14px; }
+  .run { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  figure .frame { aspect-ratio: 4 / 5; background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  figure img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
+  figure .empty { font: 500 10px var(--mono); color: var(--mute-4); text-align: center; padding: 10px; }
+  figure .empty.failed { color: var(--red-soft); }
+  figcaption { display: flex; gap: 6px; font: 500 10px var(--mono); color: var(--mute-3); flex-wrap: wrap; }
+  figcaption .d { color: var(--ink-3); }
+  figcaption .d.best { color: var(--lime); }
+
+  .zoom { position: fixed; inset: 0; z-index: 20; background: rgba(5,6,8,.94); display: flex; flex-direction: column; padding: 16px; gap: 10px; }
+  .zoom .pair { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .zoom .pair > div { min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .zoom img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+  .zoom .top { display: flex; align-items: center; gap: 10px; }
+  @media (max-width: 700px) { .zoom .pair { grid-template-columns: 1fr; } }
+  .empty-state { color: var(--mute); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <span class="mark"><i></i></span>
+  <span class="wordmark">photodump</span>
+  <span class="tagchip">sweeps</span>
+  <span class="spacer"></span>
+  <a class="back" href="/">&larr; studio</a>
+</header>
+
+<main>
+  <div class="picker" id="picker"></div>
+  <div id="view"><div class="empty-state">Loading sweeps&hellip;</div></div>
+</main>
+
+<div class="zoom" id="zoom" hidden>
+  <div class="top">
+    <span class="cap" id="zoom-title"></span>
+    <span class="spacer"></span>
+    <button class="btn sm ghost" id="zoom-close">close &times;</button>
+  </div>
+  <div class="pair">
+    <div><span class="meta">reference</span><img id="zoom-ref" alt="reference"></div>
+    <div><span class="meta" id="zoom-meta"></span><img id="zoom-img" alt="render"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const PENDING = new Set(['queued', 'running', 'paused']);
+let CURRENT = decodeURIComponent(location.hash.slice(1)) || null;
+let DATA = null;
+let timer = null;
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.json();
+}
+
+function chips(set) {
+  return Object.entries(set || {}).map(([k, v]) =>
+    `<span class="chip">${esc(k)}=${esc(Array.isArray(v) ? (v.length ? `${v.length} boxes` : 'none') : v)}</span>`).join('');
+}
+
+/* The number a run is judged by: its final image. That is pass 2 when the
+   sweep chains one, since pass 1 is only an intermediate. */
+function finalOf(run) {
+  return DATA.chained ? run.pass2 : run.pass1;
+}
+
+function figure(job, label, best) {
+  if (!job) return `<figure><div class="frame"><span class="empty">${label}<br>starts when pass 1 lands</span></div><figcaption>${label}</figcaption></figure>`;
+  const im = job.images?.[0];
+  if (!im) {
+    const failed = job.status === 'failed' || job.status === 'cancelled';
+    const why = failed ? (job.error || job.status).slice(0, 120) : job.status === 'running' ? 'rendering now' : 'queued · waits for the desktop';
+    return `<figure><div class="frame"><span class="empty ${failed ? 'failed' : ''}">${esc(why)}</span></div>
+      <figcaption>${label} · #${job.id}</figcaption></figure>`;
+  }
+  const d = im.distance == null ? '' : `<span class="d ${best ? 'best' : ''}">${im.distance.toFixed(3)}</span>`;
+  return `<figure>
+    <div class="frame"><img loading="lazy" src="/out/${encodeURIComponent(im.filename)}" data-zoom="${esc(im.filename)}" data-label="${esc(label)} · #${job.id} · seed ${job.seed ?? im.seed}" alt=""></div>
+    <figcaption>${label} · #${job.id} ${d}<span class="dims" data-dims="${esc(im.filename)}"></span></figcaption>
+  </figure>`;
+}
+
+function render() {
+  const view = $('view');
+  if (!DATA) return;
+  const runs = DATA.cells.flatMap((c) => c.runs);
+  const jobs = runs.flatMap((r) => [r.pass1, r.pass2].filter(Boolean));
+  const chained = DATA.chained;
+  // A failed pass 1 never gets a pass 2, so it must not hold the page "pending".
+  const dead = (j) => j.status === 'failed' || j.status === 'cancelled';
+  const expected = runs.reduce((n, r) => n + 1 + (chained && !dead(r.pass1) ? 1 : 0), 0);
+  const done = jobs.filter((j) => j.status === 'done').length;
+  const pending = jobs.some((j) => PENDING.has(j.status)) || jobs.length < expected;
+
+  // Mean distance of each cell's final images; lower is closer to the reference's look.
+  const scored = DATA.cells.map((c) => {
+    const ds = c.runs.map(finalOf).map((j) => j?.images?.[0]?.distance).filter((d) => d != null);
+    return { label: c.label, set: c.set, n: ds.length, total: c.runs.length,
+             mean: ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : null };
+  });
+  const ranked = scored.filter((s) => s.mean != null).sort((a, b) => a.mean - b.mean);
+  const bestLabel = ranked[0]?.label;
+
+  const ref = DATA.reference;
+  view.innerHTML = `
+    <div class="lead">
+      ${ref ? `<div class="refcard"><img src="/refs/${encodeURIComponent(ref.filename)}" data-ref alt="reference">
+        <div class="body"><span class="cap">reference</span><span class="meta">#${ref.id} · ${esc(ref.label)}</span></div></div>` : '<div></div>'}
+      <div class="summary">
+        <h1>${esc(DATA.name)}</h1>
+        <p>${done} of ${expected} renders landed.
+          ${pending ? 'The rest render the next time the desktop is awake &mdash; this page refreshes itself.' : 'Complete.'}</p>
+        <div class="bar ${pending ? 'waiting' : ''}"><i style="width:${expected ? Math.round(100 * done / expected) : 0}%"></i></div>
+        <p>Scores are the mean distance from the reference's look on ${DATA.axes.length} axes (${DATA.axes.join(', ')}); lower is closer.
+          They rank candidates &mdash; they do not judge them. Hue is ignored on purpose, so a correct hair colour is never penalised. Look before deciding.</p>
+        ${ranked.length ? `<div class="scroll"><table class="rank">
+          <thead><tr><th>cell</th><th>settings</th><th style="text-align:right">scored</th><th style="text-align:right">mean distance</th></tr></thead>
+          <tbody>${scored.slice().sort((a, b) => (a.mean ?? 9) - (b.mean ?? 9)).map((s) => `
+            <tr class="${s.label === bestLabel ? 'best' : ''}"><td>${esc(s.label)}</td><td>${chips(s.set)}</td>
+            <td class="num">${s.n}/${s.total}</td><td class="num">${s.mean == null ? '&mdash;' : s.mean.toFixed(3)}</td></tr>`).join('')}
+          </tbody></table></div>` : ''}
+      </div>
+    </div>
+    ${DATA.cells.map((c) => `
+      <section class="cell">
+        <div class="cell-head"><h2>${esc(c.label)}</h2>${chips(c.set)}</div>
+        <div class="runs">${c.runs.map((r) => `
+          <div class="run">${figure(r.pass1, 'pass 1', false)}${chained ? figure(r.pass2, 'pass 2', c.label === bestLabel) : ''}</div>`).join('')}
+        </div>
+      </section>`).join('')}`;
+
+  // Real pixel size, from the file itself: the upscale cells exist to change it.
+  view.querySelectorAll('img[data-zoom]').forEach((img) => {
+    const show = () => {
+      const tag = view.querySelector(`[data-dims="${CSS.escape(img.dataset.zoom)}"]`);
+      if (tag) tag.textContent = `· ${img.naturalWidth}×${img.naturalHeight}`;
+    };
+    img.complete ? show() : img.addEventListener('load', show, { once: true });
+  });
+
+  clearTimeout(timer);
+  if (pending) timer = setTimeout(load, 20000);
+}
+
+async function load() {
+  let list;
+  try { list = await getJSON('/api/sweeps'); } catch (e) {
+    $('view').innerHTML = `<div class="empty-state">Could not load sweeps: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!list.length) {
+    $('picker').innerHTML = '';
+    $('view').innerHTML = `<div class="empty-state">No sweeps yet. Queue one with <code>tools/stage_sweep.py</code>.</div>`;
+    return;
+  }
+  if (!CURRENT || !list.some((s) => s.name === CURRENT)) CURRENT = list[0].name;
+  $('picker').innerHTML = list.map((s) => `
+    <button data-sweep="${esc(s.name)}" class="${s.name === CURRENT ? 'on' : ''}">
+      <span>${esc(s.name)}</span><span class="n">${s.done}/${s.jobs} jobs${s.failed ? ` · ${s.failed} failed` : ''}</span>
+    </button>`).join('');
+  try { DATA = await getJSON(`/api/sweeps/${encodeURIComponent(CURRENT)}`); } catch (e) {
+    $('view').innerHTML = `<div class="empty-state">Could not load ${esc(CURRENT)}: ${esc(e.message)}</div>`;
+    return;
+  }
+  render();
+}
+
+$('picker').onclick = (e) => {
+  const b = e.target.closest('[data-sweep]');
+  if (!b) return;
+  CURRENT = b.dataset.sweep;
+  history.replaceState(null, '', `#${encodeURIComponent(CURRENT)}`);
+  load();
+};
+
+$('view').onclick = (e) => {
+  const img = e.target.closest('img[data-zoom], img[data-ref]');
+  if (!img || !DATA?.reference) return;
+  $('zoom-ref').src = `/refs/${encodeURIComponent(DATA.reference.filename)}`;
+  $('zoom-img').src = img.src;
+  $('zoom-meta').textContent = img.dataset.label || 'reference';
+  $('zoom-title').textContent = DATA.name;
+  $('zoom').hidden = false;
+};
+const closeZoom = () => { $('zoom').hidden = true; };
+$('zoom-close').onclick = closeZoom;
+$('zoom').onclick = (e) => { if (e.target === $('zoom')) closeZoom(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(); });
+
+load();
+</script>
+</body>
+</html>

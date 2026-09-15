@@ -1,0 +1,39 @@
+{
+  "name": "upscale-hair-lettering-1",
+  "_why": "Settles the three unrendered image fixes from 2026-09-13 in one unattended run. See RECIPES.md, 'Built 2026-09-13 for the open items'. Every cell shares the two seeds, so a difference between cells is the parameter, not the noise. Seeds are jobs 69 and 70's, the known-good chain.",
+  "seeds": [1712170323, 648109459],
+  "base": {
+    "prompt": "cynthia (pokemon), 1girl, solo, very long hair, hair over one eye, grey eyes, black hair ornament, team rocket uniform, white crop top, red letter R, black elbow gloves, white shorts, black thighhighs, hand on hip, confident smirk, retro artstyle, 1990s (style), airbrush, gradient shading, dramatic rim lighting, dark moody background",
+    "negative_full": "text, watermark, signature, username, bright colors, oversaturated, flat color, bad quality, worst quality, bad hands, bad anatomy",
+    "workflow": "img2img",
+    "ref_ids": [4],
+    "aspect": "portrait",
+    "denoise": 0.45,
+    "steps": 40,
+    "cfg": 5.0,
+    "second_pass": true,
+    "second_pass_denoise": 0.65,
+    "second_pass_prompt_add": "(platinum blonde hair:1.5)",
+    "second_pass_negative_add": "(green hair:1.7), (black hair:1.6), (dark hair:1.5)",
+    "clean_regions": [
+      [0.03, 0.11, 0.14, 0.34],
+      [0.03, 0.44, 0.11, 0.085],
+      [0.03, 0.52, 0.035, 0.14],
+      [0.03, 0.66, 0.11, 0.18],
+      [0.04, 0.87, 0.12, 0.09],
+      [0.13, 0.915, 0.14, 0.04],
+      [0.0, 0.47, 0.055, 0.055],
+      [0.945, 0.47, 0.055, 0.055],
+      [0.45, 0.965, 0.1, 0.03]
+    ]
+  },
+  "cells": [
+    {"label": "no clean-up, no upscale", "set": {"clean_regions": [], "hires": false}},
+    {"label": "clean-up, no upscale", "set": {"hires": false}},
+    {"label": "pixel 0.25", "set": {"hires": true, "hires_method": "pixel", "hires_denoise": 0.25}},
+    {"label": "pixel 0.35", "set": {"hires": true, "hires_method": "pixel", "hires_denoise": 0.35}},
+    {"label": "pixel 0.45", "set": {"hires": true, "hires_method": "pixel", "hires_denoise": 0.45}},
+    {"label": "latent 0.45", "set": {"hires": true, "hires_method": "latent", "hires_denoise": 0.45}},
+    {"label": "latent 0.55", "set": {"hires": true, "hires_method": "latent", "hires_denoise": 0.55}}
+  ]
+}

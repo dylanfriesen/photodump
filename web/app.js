@@ -1577,7 +1577,7 @@ function syncLbNav() {
   $('lb-prev').disabled = at <= 0;
   $('lb-next').disabled = at < 0 || at >= list.length - 1;
   $('lb-prev').hidden = $('lb-next').hidden = list.length < 2;
-  $('lb-pos').textContent = at >= 0 ? `${at + 1} / ${list.length}` : '';
+  $('lb-pos').textContent = at >= 0 ? `${at + 1} of ${list.length}` : '';
   $('lb-keys').hidden = list.length < 2;
 }
 
