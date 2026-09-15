@@ -45,14 +45,16 @@
           <div class="node-prog" id="node-prog" hidden>
             <span class="pct" id="prog-pct"></span>
             <span class="stage" id="prog-stage"></span>
-            <span class="spacer"></span>
             <span class="eta" id="prog-eta"></span>
           </div>
+          <!-- Secondary line: the connection error while ComfyUI is unreachable,
+               or what a paused queue means. Quiet, never an alarm. -->
+          <div class="node-sub" id="node-sub" hidden></div>
         </div>
         <div class="node-rule" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100"><i></i><b id="node-fill"></b></div>
       </div>
       <details id="preflight" hidden>
-        <summary><span class="caret"></span><span id="pf-summary"></span></summary>
+        <summary><span class="pf-dot"></span><span id="pf-summary"></span></summary>
         <div id="pf-body"></div>
       </details>
     </div>
@@ -70,16 +72,17 @@
       <div class="task" data-task="create">
         <label class="f"><span class="cap">prompt</span>
           <textarea id="cr-prompt" rows="5" placeholder="a lone sorcerer on a rain-slick Shibuya crossing at night, neon reflections, cursed energy crackling"></textarea></label>
-        <label class="check" style="margin:-6px 0 0">
+        <label class="check big">
           <input type="checkbox" id="cr-quality" checked><span class="box"></span>
-          <span>add quality tags</span>
+          <span>Add quality tags</span>
+          <span class="sample" id="cr-quality-sample"></span>
         </label>
 
         <label class="f"><span class="cap">avoid</span>
           <input id="cr-negative" type="text" placeholder="text, watermark, extra limbs" autocomplete="off"></label>
 
         <div class="f">
-          <div style="display:flex;align-items:center;gap:7px">
+          <div class="caprow">
             <span class="cap">reference images</span>
             <span class="spacer"></span>
             <span class="meta" id="cr-ref-count"></span>
@@ -88,32 +91,86 @@
           <span class="hint" id="cr-ref-hint">Click to add, in order. Several can be combined &mdash; they are blended as one style reference.</span>
         </div>
 
-        <div class="f2" id="cr-ip-row" hidden>
-          <label class="f" id="cr-ipweight-wrap"><span class="cap">reference strength</span>
-            <input id="cr-ipweight" class="mono-in" type="number" step="0.05" min="0.1" max="1.5" value="0.7"></label>
-          <label class="f" id="cr-denoise-wrap" hidden><span class="cap">how much to change</span>
-            <input id="cr-denoise" class="mono-in" type="number" step="0.05" min="0.1" max="1" value="0.65"></label>
-          <div class="f" id="cr-stylematch-wrap" hidden><span class="cap">style match</span>
-            <label class="check"><input type="checkbox" id="cr-stylematch"><span class="box"></span>
-              <span>copy the reference&rsquo;s rendering, fix colour in a 2nd pass</span></label></div>
-          <label class="f"><span class="cap">how to use</span>
+        <!-- What the references will actually do, in one glance. Filled by
+             syncCreate() from the resolved workflow. -->
+        <div id="cr-plan" class="plan"></div>
+
+        <div class="refbox" id="cr-ip-row" hidden>
+          <label class="check big" id="cr-keep-wrap">
+            <input type="checkbox" id="cr-keep"><span class="box"></span>
+            <span id="cr-keep-label">Keep composition</span>
+            <span class="sample">img2img</span>
+          </label>
+          <div class="f" id="cr-denoise-wrap" hidden>
+            <div class="caprow">
+              <span class="cap">how much to change</span>
+              <span class="spacer"></span>
+              <span class="val" id="cr-denoise-val"></span>
+            </div>
+            <div class="slider lime">
+              <div class="fill"></div><div class="knob"></div>
+              <input id="cr-denoise" type="range" step="0.05" min="0.1" max="1" value="0.65" aria-label="how much to change">
+            </div>
+            <div class="ends"><span>0.1 · nearly the same</span><span>1.0 · new picture</span></div>
+          </div>
+          <div class="f" id="cr-ipweight-wrap">
+            <div class="caprow">
+              <span class="cap">reference strength</span>
+              <span class="spacer"></span>
+              <span class="val teal" id="cr-ipweight-val"></span>
+            </div>
+            <div class="slider teal">
+              <div class="fill"></div><div class="knob"></div>
+              <input id="cr-ipweight" type="range" step="0.05" min="0.1" max="1.5" value="0.7" aria-label="reference strength">
+            </div>
+            <div class="ends"><span>0.1 · a hint</span><span>1.5 · heavy</span></div>
+          </div>
+          <label class="f"><span class="cap">how to use it</span>
             <select id="cr-mode">
               <option value="">auto</option>
+              <option value="img2img">keep composition (img2img)</option>
               <option value="ipadapter_multi">style only (IP-Adapter)</option>
-              <option value="img2img">keep composition (single ref)</option>
             </select></label>
         </div>
 
-        <div class="f2" id="cr-p2-row" hidden>
-          <label class="f"><span class="cap">pass 2 adds</span>
-            <input id="cr-p2-add" type="text" placeholder="platinum blonde hair" autocomplete="off"></label>
-          <label class="f"><span class="cap">pass 2 avoids</span>
-            <input id="cr-p2-avoid" type="text" placeholder="dark hair, green hair" autocomplete="off"></label>
+        <div class="warnbox" id="cr-warn" hidden>
+          <span class="dot"></span><span id="cr-warn-text"></span>
         </div>
 
-        <div class="f" id="cr-clean-wrap" hidden>
-          <div style="display:flex;align-items:center;gap:7px">
-            <span class="cap">clean up the reference</span>
+        <div class="smatch" id="cr-stylematch-wrap" hidden>
+          <label class="smatch-head">
+            <input type="checkbox" id="cr-stylematch"><span class="box"></span>
+            <span class="t">
+              <span class="name">Style match</span>
+              <span class="sub">copy the reference&rsquo;s rendering, fix colour in a 2nd pass</span>
+            </span>
+            <span class="chip2">2 jobs</span>
+          </label>
+          <div class="smatch-body" id="cr-p2-row" hidden>
+            <div class="step">
+              <span class="rail"><span class="num">1</span><span class="line"></span></span>
+              <span class="txt">
+                <span class="name">Render from the reference</span>
+                <span class="sub">Low denoise, so the art style carries over &mdash; and so do the reference&rsquo;s colours.</span>
+              </span>
+            </div>
+            <div class="step">
+              <span class="rail"><span class="num on">2</span></span>
+              <span class="txt">
+                <span class="name">Re-render pass 1&rsquo;s output to fix colour</span>
+                <span class="sub">Only pass 2 sees these tags.</span>
+                <label class="f"><span class="cap">pass 2 adds</span>
+                  <input id="cr-p2-add" type="text" placeholder="platinum blonde hair" autocomplete="off"></label>
+                <label class="f"><span class="cap">pass 2 avoids</span>
+                  <input id="cr-p2-avoid" type="text" placeholder="dark hair, green hair" autocomplete="off"></label>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card clean" id="cr-clean-wrap" hidden>
+          <div class="card-head">
+            <span class="cap" id="cr-clean-title">clean up the reference</span>
             <span class="spacer"></span>
             <span class="meta" id="cr-clean-count"></span>
           </div>
@@ -122,16 +179,12 @@
             <div id="cr-clean-boxes"></div>
           </div>
           <div class="cleanrow">
-            <button type="button" id="btn-clean-preview" class="btn">Preview fill</button>
-            <button type="button" id="btn-clean-clear" class="btn">Clear boxes</button>
+            <button type="button" id="btn-clean-preview" class="btn sm">Preview fill</button>
+            <button type="button" id="btn-clean-clear" class="btn sm ghost">Clear boxes</button>
+            <span class="meta" id="cr-clean-note" hidden>this is what img2img will read</span>
           </div>
-          <span class="hint">Drag over lettering, logos and app buttons &mdash; img2img copies them as fake text. Click a box to remove it. Keep boxes off the character.</span>
+          <span class="hint pad">Drag over lettering, logos and app buttons &mdash; img2img copies them as fake text. Click a box to remove it. Keep boxes off the character.</span>
         </div>
-
-        <label class="check" id="cr-hires-wrap">
-          <input type="checkbox" id="cr-hires"><span class="box"></span>
-          <span>upscale 1.5&times; in a final refine pass</span>
-        </label>
 
         <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end">
           <div class="f"><span class="cap">canvas</span>
@@ -146,16 +199,52 @@
           </div>
         </div>
 
+        <label class="check big" id="cr-hires-wrap">
+          <input type="checkbox" id="cr-hires"><span class="box"></span>
+          <span>Upscale 1.5&times; in a final refine pass</span>
+        </label>
+
+        <!-- One sampler for every GPU task: switchTask() moves #sampler into
+             the active task's slot, so its ids stay single-instance. -->
+        <div class="sampler-slot">
+          <details class="disc" id="sampler">
+            <summary>
+              <span class="caret"></span>
+              <span>Sampler</span>
+              <span class="tagchip">shared by every task</span>
+              <span class="spacer"></span>
+              <span class="sum" id="sampler-sum"></span>
+            </summary>
+            <div class="body three">
+              <label class="f"><span class="cap">steps</span>
+                <input id="steps" class="mono-in" type="number" min="8" max="60" value="30"></label>
+              <label class="f"><span class="cap">cfg</span>
+                <input id="cfg" class="mono-in" type="number" step="0.5" min="1" max="12" value="5"></label>
+              <label class="f"><span class="cap">checkpoint</span><select id="checkpoint" class="mono-in"></select></label>
+            </div>
+          </details>
+        </div>
+
         <div class="actionbar">
-          <div class="hint" data-queue-hint></div>
           <div class="row2">
             <button id="btn-cr-preview" class="btn">Preview</button>
             <button id="btn-create" class="btn go" style="flex:1">
               <span>Generate</span><span class="qty" id="cr-qty">&times;4</span>
             </button>
           </div>
+          <div class="hint" data-queue-hint></div>
+          <div class="hint blocked" id="cr-block" hidden>Blocked: the node is missing a required pack.</div>
         </div>
-        <pre id="cr-preview" hidden></pre>
+
+        <div class="card" id="cr-preview-box" hidden>
+          <div class="card-head">
+            <span class="cap">what will be sent</span>
+            <span class="meta" id="cr-preview-count"></span>
+            <span class="spacer"></span>
+            <button class="linkbtn mute" id="cr-preview-copy" type="button">copy</button>
+          </div>
+          <pre id="cr-preview"></pre>
+        </div>
       </div>
 
       <!-- ---------- fuse ---------- -->
@@ -195,7 +284,7 @@
         <details class="disc">
           <summary>
             <span class="caret"></span>
-            <span>Reference image &amp; sampler</span>
+            <span>Reference image</span>
             <span class="spacer"></span>
             <span class="count" id="adv-count" hidden>0 set</span>
           </summary>
@@ -214,24 +303,19 @@
               <label class="f"><span class="cap">ip weight</span>
                 <input id="ip-weight" class="mono-in" type="number" step="0.05" min="0.1" max="1.5" value="0.7"></label>
             </div>
-            <div class="f2">
-              <label class="f"><span class="cap">steps</span>
-                <input id="steps" class="mono-in" type="number" min="8" max="60" value="30"></label>
-              <label class="f"><span class="cap">cfg</span>
-                <input id="cfg" class="mono-in" type="number" step="0.5" min="1" max="12" value="5"></label>
-            </div>
-            <label class="f"><span class="cap">checkpoint</span><select id="checkpoint"></select></label>
           </div>
         </details>
 
+        <div class="sampler-slot"></div>
+
         <div class="actionbar">
-          <div class="hint" data-queue-hint></div>
           <div class="row2">
             <button id="btn-preview" class="btn">Preview tags</button>
             <button id="btn-generate" class="btn go" style="flex:1">
               <span>Queue render</span><span class="qty" id="gen-qty">&times;4</span>
             </button>
           </div>
+          <div class="hint" data-queue-hint></div>
         </div>
 
         <div id="preview" hidden>
@@ -316,13 +400,15 @@
           </div>
         </div>
 
+        <div class="sampler-slot"></div>
+
         <div class="actionbar">
-          <div class="hint" data-queue-hint></div>
           <div class="row2">
             <button id="btn-extend" class="btn go wide">
               <span>Queue extend</span><span class="qty" id="ex-qty">&times;1</span>
             </button>
           </div>
+          <div class="hint" data-queue-hint></div>
         </div>
       </div>
 
@@ -456,13 +542,28 @@
 
     <!-- queue -->
     <div class="tab scroll" data-tab="queue" hidden>
-      <div class="sec-rule">
+      <div class="sec-rule qhead">
         <span class="cap">job queue</span>
-        <span class="rule"></span>
-        <button type="button" id="queue-pause">pause queue</button>
         <span class="meta" id="queue-meta"></span>
+        <span class="rule"></span>
+        <span class="qstate" id="queue-state">
+          <span class="bars2"><i></i><i></i></span>
+          <span class="txt">Queue paused &mdash; the current render will finish</span>
+          <button type="button" id="queue-pause">pause queue</button>
+        </span>
       </div>
       <div id="jobs"></div>
+      <!-- One popover for every queued row. Rows re-render on each poll, so it
+           lives outside #jobs and remembers the job id itself. -->
+      <div id="hold-pop" hidden>
+        <div class="hp-head">hold until</div>
+        <div class="hp-list" id="hold-list"></div>
+        <div class="hp-custom">
+          <input type="datetime-local" id="hold-at" aria-label="hold until (local time)">
+          <button type="button" id="hold-go">hold</button>
+        </div>
+        <div class="hp-foot">your local time &middot; sent as UTC</div>
+      </div>
     </div>
 
     <!-- references -->
@@ -503,20 +604,22 @@
 </nav>
 
 <!-- ==================== lightbox ==================== -->
-<div id="lightbox" hidden>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Image detail" hidden>
   <div class="lb-frame">
     <div class="lb-head">
       <span class="id" id="lb-id"></span>
       <span class="meta" id="lb-meta"></span>
       <span class="spacer"></span>
+      <span class="meta" id="lb-pos"></span>
       <button id="lb-close">&times;</button>
     </div>
     <div class="lb-body">
-      <div class="lb-stage">
+      <div class="lb-stage" id="lb-stage">
         <button class="lb-nav prev" id="lb-prev" aria-label="previous">&#8249;</button>
         <img id="lb-img" alt="">
         <video id="lb-vid" controls loop hidden></video>
         <button class="lb-nav next" id="lb-next" aria-label="next">&#8250;</button>
+        <span class="lb-keys" id="lb-keys">&larr; &rarr; to page</span>
       </div>
       <aside class="lb-side">
         <div class="lb-scroll">
@@ -528,52 +631,79 @@
             <span class="cap">caption</span>
             <div id="lb-caption"></div>
           </div>
-          <div class="lb-acts">
-            <button id="lb-fav" class="btn"><span>&#9733;</span><span>Favourite</span></button>
-            <button id="lb-caption-btn" class="btn">Draft caption</button>
-            <a id="lb-download" class="btn" download>Download</a>
-            <button id="lb-delete" class="btn danger">Delete</button>
-            <button id="lb-animate" class="btn"><span>Animate this still</span></button>
-            <button id="lb-deliver" class="btn"><span>Make Instagram mp4</span></button>
-            <button id="lb-reuse" class="btn"><span>Reuse these settings</span></button>
+          <div class="f">
+            <span class="cap">keep</span>
+            <div class="lb-acts three">
+              <button id="lb-fav" class="btn"><span>&#9733;</span><span>Favourite</span></button>
+              <a id="lb-download" class="btn" download>Download</a>
+              <button id="lb-delete" class="btn danger">Delete</button>
+            </div>
           </div>
+          <div class="f">
+            <span class="cap">make something from this</span>
+            <div class="lb-acts">
+              <button id="lb-animate" class="btn"><span>Animate</span></button>
+              <button id="lb-deliver" class="btn"><span>Make Instagram mp4</span><i class="srv"></i></button>
+              <button id="lb-reuse" class="btn"><span>Reuse these settings</span></button>
+              <button id="lb-caption-btn" class="btn">Draft caption</button>
+            </div>
+          </div>
+
           <div id="deliver-box" hidden>
             <div class="head">
               <span class="cap">instagram encode</span>
               <span class="meta" id="deliver-meta">h.264 · 1080 wide · faststart</span>
+              <span class="spacer"></span>
+              <span class="srvchip">server-side</span>
             </div>
             <div class="body">
-              <p class="hint" id="deliver-hint" style="margin:0">Fits and pads — nothing is cropped.</p>
+              <p class="hint" id="deliver-hint">Fits and pads — nothing is cropped.</p>
               <div class="pickrow">
-                <button class="btn" data-target="reel">Reel 9:16</button>
-                <button class="btn" data-target="feed">Feed 4:5</button>
-                <button class="btn" data-target="square">Square</button>
+                <button class="fmt" data-target="reel"><i style="width:15px"></i><b>Reel</b><em>9:16</em></button>
+                <button class="fmt" data-target="feed"><i style="width:21px"></i><b>Feed</b><em>4:5</em></button>
+                <button class="fmt" data-target="square"><i style="width:26px"></i><b>Square</b><em>1:1</em></button>
               </div>
+              <div class="foot"><i></i><span>builds now on kanto &mdash; works while the desktop sleeps</span></div>
             </div>
           </div>
 
           <div id="animate-box" hidden>
             <div class="head">
               <span class="cap">animate</span>
-              <span class="meta">still &rarr; .webm clip</span>
+              <span class="meta">still &rarr; mp4 clip</span>
             </div>
             <div class="body">
               <label class="f"><span class="cap">motion description</span>
                 <textarea id="an-prompt" rows="2" placeholder="slow push in, cursed energy drifting upward, hair moving in the wind"></textarea></label>
-              <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:9px">
-                <label class="f"><span class="cap">seconds</span>
-                  <input id="an-seconds" class="mono-in" type="number" step="0.5" min="1" max="5" value="3"></label>
-                <label class="f"><span class="cap">canvas</span>
-                  <select id="an-size" class="mono-in">
-                    <option value="story_540">544 &times; 960 (9:16, fast)</option>
-                    <option value="story">704 &times; 1280 (9:16)</option>
-                    <option value="portrait_540">544 &times; 680 (4:5, fast)</option>
-                    <option value="portrait">704 &times; 896 (4:5)</option>
-                    <option value="square_540">640 &times; 640 (1:1, fast)</option>
-                    <option value="square">960 &times; 960 (1:1)</option>
-                  </select></label>
-                <p class="hint" style="grid-column:span 2;margin:0">The 540 sizes render far faster on 16GB. Upscale after.</p>
+
+              <div class="f">
+                <span class="cap">model</span>
+                <div id="an-backend" class="models">
+                  <span data-value="wan" class="on"><b>WAN 2.2</b><em>~20 min · 3–5s · silent</em></span>
+                  <span data-value="ltx"><b>LTX-2.5</b><em>33–60 min · ~4s · with audio</em></span>
+                </div>
               </div>
+
+              <div class="f">
+                <div class="caprow">
+                  <span class="cap">canvas</span>
+                  <span class="spacer"></span>
+                  <span class="meta">fast &uarr; &middot; full &darr;</span>
+                </div>
+                <div id="an-size" class="sizes">
+                  <span data-value="story_540" class="on"><b>544×960</b><em>9:16 fast</em></span>
+                  <span data-value="portrait_540"><b>544×680</b><em>4:5 fast</em></span>
+                  <span data-value="square_540"><b>640×640</b><em>1:1 fast</em></span>
+                  <span data-value="story"><b>704×1280</b><em>9:16</em></span>
+                  <span data-value="portrait"><b>704×896</b><em>4:5</em></span>
+                  <span data-value="square"><b>960×960</b><em>1:1</em></span>
+                </div>
+                <span class="hint">The 540 sizes render far faster on 16GB. Upscale after.</span>
+              </div>
+
+              <label class="f secs"><span class="cap">seconds</span>
+                <input id="an-seconds" class="mono-in" type="number" step="0.5" min="1" max="5" value="3"></label>
+
               <button id="an-go" class="btn go wide">Queue clip</button>
               <div class="foot"><i></i><span data-animate-hint></span></div>
             </div>

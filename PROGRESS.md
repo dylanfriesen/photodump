@@ -12,6 +12,19 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ---
 
+## 2026-09-14
+
+**Finish the September design port.** Claude had imported the v2 artboards and
+written most markup/CSS, but stopped before the detail-view handlers; the missing
+`syncAnimate()` aborted boot before galleries and polling started. Completed the
+wiring, including model payloads, shared sampler, scheduling, paired queue rows,
+recipe reuse, mobile swipes, and accessible controls. Browser checks caught
+nested model-label clicks, stale capability options, and a test-fixture assumption
+that counted every style-match group instead of the pair under test. Validation:
+50 unit tests, 43 mock-render smoke assertions, 53 browser checks on isolated data.
+The live image was rebuilt; the absent internal Caddy vhost was restored without
+publishing a port. Real GPU quality and LTX rendering remain unproven here.
+
 ## 2026-09-13
 
 **The four open image items, built as far as kanto can take them**
@@ -497,3 +510,4 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `71bb641` 2026-09-11 14:26 (dylan) — Solve style matching with a chained two-pass img2img
 - `5981316` 2026-09-11 14:28 (dylan) — Record the image recipe so another session can pick it up
 - `9703f9e` 2026-09-13 15:17 (dylan) — Audit saved style-match renders; add a render-vs-reference scorer
+- `f2c2427` 2026-09-13 15:54 (dylan) — Build the four open image fixes as far as kanto can take them

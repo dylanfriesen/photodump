@@ -1,3 +1,54 @@
+# Photodump continuation — September 14, 2026
+
+## September design implemented
+
+Finished Claude's interrupted implementation of **Photodump v2 Artboards.dc.html**
+from [Claude Design project 3c802983](https://claude.ai/design/p/3c802983-07b0-421a-92cf-decaef471359?file=Photodump+v2+Artboards.dc.html).
+Used the exact artboard and `support.js` already imported through Claude's
+DesignSync MCP on September 14. Cached source:
+`/tmp/claude-1000/-home-dylan/33d98f45-60fd-4405-9502-99001aa206ff/scratchpad/v2/`.
+`support.js` is the design canvas runtime; the application keeps its existing
+vanilla JS runtime and API rather than shipping the canvas editor.
+
+- Create now has the reference plan card, numbered selection, two-pass panel,
+  cleanup preview states, preview card, toasts, and a shared visible sampler.
+- Node progress distinguishes measured, estimated, and unknown values; mobile
+  keeps the node strip across screens. Capability controls recover on reconnect.
+- Queue has hold/schedule, pause/stop/resume, error copy, and paired style-match
+  rows. Pairing requires the same batch and an img2img child, so a later export
+  or animation cannot masquerade as the second pass.
+- Detail has paging position, touch swipes, keyboard navigation, grouped actions,
+  Instagram format cards, six animation canvases and wired WAN/LTX selection.
+  Create reference-based requests and Fuse recipes can restore saved settings;
+  derived image-only jobs without a reusable reference recipe keep reuse hidden.
+- Added keyboard control to reference/model/canvas choices and modal focus
+  containment. Sampler text remains 16px on mobile to avoid input zoom.
+- `/api/jobs` and `/api/images` now include the required lineage/settings fields
+  and reject invalid or excessive limits before database access.
+
+### Validation
+
+- Existing unit suite: **46 passed**; new `tools.test_design_api`: **4 passed**.
+- `tools/smoke.sh`: **43 passed, 0 failed**, from a separate repo copy under
+  `/tmp/photodump-v2-validation` with its own data directory and mock node.
+- Headless Chromium: **47 browser assertions**, plus **6 cleanup/swipe/keyboard
+  checks**, no browser exceptions. Covered real API submissions to an isolated
+  instance, local-time scheduling, model payloads, reuse, reference modes,
+  progress, and 390/768/1440px layouts. Synthetic images only.
+- Logs/screenshots: `/tmp/photodump-v2-*`; API regression tests are committed in
+  `tools/test_design_api.py`. Run them with the same Docker mounts documented
+  in AGENTS.md.
+
+The live image was rebuilt. App networking remains loopback-only on 8096 with
+`default` and `web` networks. Added the missing policy-required internal Caddy
+vhost at `http://photodump.internal:8096` in `/srv/gooner/caddy/Caddyfile`, validated
+and reloaded it. This does not publish a port or change Tailscale Serve routes.
+
+No new GPU quality claims: desktop ComfyUI was unavailable. The unverified
+image-quality and LTX render work in RECIPES.md / AT-THE-DESKTOP.md remains open.
+
+---
+
 # Photodump continuation — September 11, 2026
 
 **Start here: `RECIPES.md`.** Image quality was the open problem for three

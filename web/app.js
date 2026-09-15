@@ -32,11 +32,15 @@ let NODE = { online: false, current: null, queued: 0 };
    Every queueing action used to be silent on success and silent on failure
    too - `await api(...)` with no check. So a 500 looked exactly like a job
    that queued fine, and a job that queued fine looked like nothing happened. */
-function toast(text, kind = 'ok', ms = 4200) {
+function toast(text, kind = 'ok', ms) {
+  // Failures stay long enough to read the error; everything else is a nod.
+  ms ??= kind === 'bad' ? 7000 : 4200;
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
-  el.innerHTML = `<span class="dot"></span><span>${esc(text)}</span>
-                  <span class="spacer"></span><button aria-label="dismiss">&times;</button>`;
+  // Job ids read as ids: mono, in the toast's own colour.
+  const body = esc(text).replace(/#\d+/g, (m) => `<span class="jid">${m}</span>`);
+  el.innerHTML = `<span class="dot"></span><span class="spacer">${body}</span>
+                  <button aria-label="dismiss">&times;</button>`;
   const close = () => {
     el.classList.add('leaving');
     setTimeout(() => el.remove(), 200);
@@ -60,7 +64,7 @@ async function queue(url, payload, describe) {
   const ids = body.queued || [];
   const local = url === '/api/reels' || url.endsWith('/deliver');
   const where = NODE.online || local ? '' : ' — waiting for ComfyUI to reconnect';
-  toast(`${describe(ids)}${where}`, NODE.online ? 'ok' : 'teal');
+  toast(`${describe(ids)}${where}`, local || !NODE.online ? 'teal' : 'ok');
   refreshJobs();
   pollStatus.last = undefined;
   return body;
@@ -78,7 +82,12 @@ function initSeg(el) {
     configurable: true,
     get() { return el.querySelector('span.on')?.dataset.value ?? ''; },
     set(v) {
-      el.querySelectorAll('span').forEach((s) => s.classList.toggle('on', s.dataset.value === v));
+      el.querySelectorAll('span[data-value]').forEach((s) => {
+        const on = s.dataset.value === v;
+        s.classList.toggle('on', on);
+        s.setAttribute('aria-checked', String(on));
+        s.tabIndex = on ? 0 : -1;
+      });
     },
   });
   el.addEventListener('click', (e) => {
@@ -86,6 +95,22 @@ function initSeg(el) {
     if (!s || s.classList.contains('on')) return;
     el.value = s.dataset.value;
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  el.setAttribute('role', 'radiogroup');
+  el.setAttribute('aria-label', el.closest('.f')?.querySelector('.cap')?.textContent || el.id);
+  el.querySelectorAll('span[data-value]').forEach((s) => s.setAttribute('role', 'radio'));
+  el.value = el.value;
+  el.addEventListener('keydown', (e) => {
+    const options = [...el.querySelectorAll('span[data-value]')];
+    const at = options.indexOf(e.target);
+    if (at < 0) return;
+    let next = at;
+    if (['ArrowRight', 'ArrowDown'].includes(e.key)) next = (at + 1) % options.length;
+    else if (['ArrowLeft', 'ArrowUp'].includes(e.key)) next = (at + options.length - 1) % options.length;
+    else if (![' ', 'Enter'].includes(e.key)) return;
+    e.preventDefault();
+    options[next].click();
+    options[next].focus();
   });
 }
 
@@ -96,7 +121,7 @@ function initSeg(el) {
 const REMEMBER = ['subject-a', 'subject-b', 'mode', 'extra', 'negative',
                   'ex-prompt', 're-bpm', 're-beats', 're-seconds',
                   'cr-prompt', 'cr-negative', 'cr-quality', 'cr-mode',
-                  'cr-p2-add', 'cr-p2-avoid'];
+                  'cr-p2-add', 'cr-p2-avoid', 'an-backend', 'an-size'];
 const isCheck = (el) => el && el.type === 'checkbox';
 const STORE_KEY = 'photodump.form.v1';
 
@@ -136,7 +161,9 @@ async function boot() {
     .map((a, i) => `<span data-value="${esc(a)}" class="${i === 0 ? 'on' : ''}">${esc(ratio[a] || a)}</span>`).join('');
 
   $('cr-aspect').innerHTML = $('aspect').innerHTML;
-  ['aspect', 'cr-aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source'].forEach((id) => initSeg($(id)));
+  ['aspect', 'cr-aspect', 'ex-target', 'ex-anchor', 're-timing', 're-source', 'an-backend', 'an-size']
+    .forEach((id) => initSeg($(id)));
+  $('cr-quality-sample').textContent = `${body.quality.split(',').slice(0, 3).join(',')}…`;
 
   const chips = body.starters.map((s, i) => `<button class="chip" data-starter="${i}">${esc(s.name)}</button>`).join('');
   $('starters').innerHTML = chips;
@@ -153,7 +180,8 @@ async function boot() {
   });
 
   switchScreen('studio');
-  syncHint(); syncCounts(); syncFeather(); syncSelection();
+  placeSampler('create');
+  syncHint(); syncCounts(); syncFeather(); syncSelection(); syncAnimate();
   await Promise.all([refreshRefs(), refreshRecipes(), refreshGallery(), refreshJobs()]);
   pollStatus();
   probeNode();
@@ -170,6 +198,7 @@ const DOT = {
   asleep: '<span class="breathe"></span>',
   ready: '<span class="steady"></span>',
   rendering: '<span class="lvl"></span><span class="lvl"></span><span class="lvl"></span>',
+  paused: '<span class="pz"></span><span class="pz"></span>',
 };
 
 /* ---------- progress ----------
@@ -193,6 +222,7 @@ function renderProgress(p) {
   PROGRESS = p;
   if (changed) refreshJobs();
 
+  document.querySelector('.node').classList.toggle('has-prog', !!p);
   if (!p) {
     row.hidden = true;
     fill.style.width = '0';
@@ -210,7 +240,7 @@ function renderProgress(p) {
   const known = p.percent != null;
   const pct = known ? Math.round(p.percent) : 0;
   $('prog-pct').textContent = known ? `${pct}%` : '—';
-  $('prog-pct').style.color = known && !p.estimated ? 'var(--lime)' : 'var(--mute-2)';
+  $('prog-pct').style.color = !known ? 'var(--mute-4)' : p.estimated ? 'var(--mute)' : 'var(--lime)';
   $('prog-stage').textContent = [
     p.steps ? `step ${p.step}/${p.steps}` : '',
     p.stage,
@@ -243,18 +273,27 @@ function renderProgress(p) {
   document.title = known ? `${pct}% · photodump` : 'photodump';
 }
 
+let statusTimer;
+let statusPending = false;
 async function pollStatus() {
+  if (statusPending) return;
+  clearTimeout(statusTimer);
+  statusPending = true;
   const { ok, body } = await api('/api/status', { signal: AbortSignal.timeout(10000) });
+  statusPending = false;
   if (!ok) {
     $('node-text').textContent = 'Connection lost · reconnecting…';
     renderProgress(null);
-    setTimeout(pollStatus, 5000);
+    statusTimer = setTimeout(pollStatus, 5000);
     return;
   }
   NODE = body;
   const state = body.current != null ? 'rendering' : body.online ? 'ready' : 'asleep';
   document.body.dataset.node = state;
-  $('node-dot').innerHTML = DOT[state];
+  document.body.dataset.queue = body.queue_paused ? 'paused' : '';
+  // A paused queue with nothing in flight shows the pause glyph; a render that
+  // is still finishing keeps its level bars, because it really is rendering.
+  $('node-dot').innerHTML = DOT[body.queue_paused && state !== 'rendering' ? 'paused' : state];
   // Scheduled and paused work is not waiting on the node, so it is named
   // separately - otherwise an idle node with five held jobs reads as stuck.
   const extra = [
@@ -271,24 +310,33 @@ async function pollStatus() {
         : `ComfyUI unavailable · ${tail} · retrying`;
   const qp = $('queue-pause');
   if (qp) qp.textContent = body.queue_paused ? 'resume queue' : 'pause queue';
-  $('node-text').title = body.connection_error || '';
+  $('queue-state')?.classList.toggle('on', !!body.queue_paused);
+  // The node card says *why* it is unavailable, in words. "Asleep" and "awake
+  // but ComfyUI is not listening" look identical from kanto otherwise.
+  const sub = body.queue_paused ? 'nothing new starts until you resume the queue'
+    : state === 'asleep' ? (body.connection_error || '') : '';
+  $('node-sub').textContent = sub;
+  $('node-sub').hidden = !sub;
   renderProgress(body.progress);
 
-  const tint = state === 'rendering' ? 'var(--lime)' : state === 'ready' ? 'var(--teal)' : 'var(--violet)';
+  const tint = body.queue_paused ? 'var(--amber)'
+    : state === 'rendering' ? 'var(--lime)' : state === 'ready' ? 'var(--teal)' : 'var(--violet)';
   [...$('node-bars').children].forEach((b, i) => {
     b.style.background = i < body.queued ? tint : 'rgba(255,255,255,.09)';
   });
   $('queue-badge').textContent = body.queued;
   $('queue-badge').style.color = body.queued > 0 ? tint : 'var(--mute-4)';
 
-  const hint = state === 'asleep'
-    ? (body.connection_error || 'Waiting for ComfyUI to reconnect. Queued jobs will start automatically.')
-    : state === 'rendering'
-      ? `Node is busy with job #${body.current} — yours starts next.`
-      : 'Node is ready — this starts immediately.';
+  const hint = body.queue_paused
+    ? 'The queue is paused — this waits until you resume it.'
+    : state === 'asleep'
+      ? 'ComfyUI is unreachable — this queues and drains when it reconnects.'
+      : state === 'rendering'
+        ? `Node is busy with job #${body.current} — yours starts after it.`
+        : 'Node is ready — this starts immediately.';
   document.querySelectorAll('[data-queue-hint]').forEach((e) => { e.textContent = hint; });
   document.querySelectorAll('[data-animate-hint]').forEach((e) => {
-    e.textContent = state === 'asleep' ? 'waiting for ComfyUI · starts automatically when reachable' : 'starts on the desktop shortly';
+    e.textContent = hint;
   });
 
   const badge = $('queue-tab-badge');
@@ -309,7 +357,7 @@ async function pollStatus() {
   pollStatus.last = `${body.current}|${body.queued}`;
   // A percentage that updates every 3s looks stuck; 1.2s is smooth and is
   // still one cheap request against a loopback server.
-  setTimeout(pollStatus, busy ? 1200 : 10000);
+  statusTimer = setTimeout(pollStatus, busy ? 1200 : 10000);
 }
 
 async function refreshPreflight() {
@@ -320,17 +368,21 @@ async function refreshPreflight() {
   const good = body.ok;
   el.classList.toggle('ok', good);
   el.classList.toggle('bad', !good);
-  $('pf-summary').innerHTML = good
-    ? `<b>${body.ready}/${body.total}</b> workflows ready on the node`
-    : `<b>${body.total - body.ready}</b> of ${body.total} workflows blocked \u2014 click for detail`;
-  $('pf-body').innerHTML = body.workflows.map((w) => {
+  $('pf-summary').textContent = good
+    ? `${body.ready}/${body.total} workflows ready on the node`
+    : `${body.total - body.ready} of ${body.total} workflows blocked${el.open ? '' : ' \u2014 click for detail'}`;
+  el.ontoggle = () => { if (!good) $('pf-summary').textContent = `${body.total - body.ready} of ${body.total} workflows blocked${el.open ? '' : ' \u2014 click for detail'}`; };
+  // Blocked first: they are the reason anyone opens this.
+  const rows = [...body.workflows].sort((a, b) => a.ok - b.ok);
+  $('pf-body').innerHTML = rows.map((w) => {
     const why = [
       w.missing_nodes.length ? `missing nodes: ${w.missing_nodes.join(', ')}` : '',
       ...w.missing_models.map((m) => `${m.field} ${JSON.stringify(m.want)} not among the node's ${m.count} option(s)`),
     ].filter(Boolean);
     return `<div class="pf-row ${w.ok ? 'ok' : 'bad'}">
-      <div class="top"><span class="tick">${w.ok ? 'ready' : 'blocked'}</span><span>${esc(w.label)}</span></div>
-      ${why.map((t) => `<span class="why">${esc(t)}</span>`).join('')}
+      <span class="tick">${w.ok ? '\u2713' : '\u2715'}</span>
+      <span class="col"><span class="label">${esc(w.label)}</span>
+      ${why.map((t) => `<span class="why">${esc(t)}</span>`).join('')}</span>
     </div>`;
   }).join('');
 }
@@ -339,18 +391,20 @@ async function probeNode() {
   const { ok, body } = await api('/api/node');
   if (!ok) return;
   if (body.checkpoints?.length) {
+    const selected = $('checkpoint').value;
     $('checkpoint').innerHTML = '<option value="">default</option>' +
       body.checkpoints.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    if (body.checkpoints.includes(selected)) $('checkpoint').value = selected;
   }
   NODE_CAPS.has_ipadapter = body.has_ipadapter !== false;
-  if (!NODE_CAPS.has_ipadapter) {
-    const note = ' — node pack not installed';
-    const opt = $('workflow').querySelector('[value="ipadapter"]');
-    if (opt) { opt.disabled = true; opt.textContent += note; }
-    // Create can reach the same workflow, so it needs the same guard.
-    const cr = $('cr-mode').querySelector('[value="ipadapter_multi"]');
-    if (cr) { cr.disabled = true; cr.textContent += note; }
+  for (const opt of [$('workflow').querySelector('[value="ipadapter"]'),
+                     $('cr-mode').querySelector('[value="ipadapter_multi"]')]) {
+    if (!opt) continue;
+    opt.dataset.label ||= opt.textContent;
+    opt.disabled = !NODE_CAPS.has_ipadapter;
+    opt.textContent = opt.dataset.label + (opt.disabled ? ' — node pack not installed' : '');
   }
+  syncCounts();
   syncCreate();
 }
 
@@ -377,15 +431,25 @@ function formValues() {
 function syncCounts() {
   $('gen-qty').textContent = `×${$('count').value}`;
   $('ex-qty').textContent = `×${$('ex-count').value}`;
-  // The advanced panel hides seven controls; show how many are off-default.
+  // The reference panel hides four controls; show how many are off-default.
   const off = [
-    $('ref').value !== '', $('workflow').value !== '', $('checkpoint').value !== '',
+    $('ref').value !== '', $('workflow').value !== '',
     +$('denoise').value !== 0.65, +$('ip-weight').value !== 0.7,
-    +$('steps').value !== 30, +$('cfg').value !== 5,
   ].filter(Boolean).length;
   const badge = $('adv-count');
   badge.hidden = off === 0;
   badge.textContent = `${off} set`;
+  // Collapsed, the sampler still says what it is set to.
+  const ckpt = $('checkpoint').value.replace(/\.safetensors$/, '') || 'default checkpoint';
+  $('sampler-sum').textContent = `${$('steps').value} · ${$('cfg').value} · ${ckpt}`;
+}
+
+/* One sampler serves Create, Fuse and Extend. It is a single DOM node moved
+   into the active task, so #steps/#cfg/#checkpoint stay single-instance. Reel
+   builds on kanto and has no sampler, so it keeps the node where it was. */
+function placeSampler(task) {
+  const slot = document.querySelector(`.task[data-task="${task}"] .sampler-slot`);
+  if (slot && !slot.contains($('sampler'))) slot.appendChild($('sampler'));
 }
 
 function syncFeather() {
@@ -562,7 +626,7 @@ function renderRefPicker(imgs) {
   $('cr-refs').innerHTML = imgs.length
     ? imgs.map((r) => {
         const at = CR_REFS.indexOf(r.id);
-        return `<figure class="${at >= 0 ? 'on' : ''}" data-pick="${r.id}">
+        return `<figure class="${at >= 0 ? 'on' : ''}" data-pick="${r.id}" role="button" tabindex="0" aria-label="${esc(r.label || 'Reference ' + r.id)}" aria-pressed="${at >= 0}">
           <img src="/refs/${esc(r.filename)}" alt="${esc(r.label)}" loading="lazy">
           ${at >= 0 ? `<span class="n">${at + 1}</span>` : ''}
           <span class="lbl">${esc(r.label)}</span>
@@ -590,6 +654,50 @@ function updateCreateButton() {
   $('btn-create').disabled = CREATE_BUSY || CREATE_BLOCKED;
 }
 
+const refRow = (id) => CR_REF_ROWS.find((r) => r.id === id);
+const refSpan = (n) => (n === 1 ? 'ref #1' : `refs #1–${n}`);
+
+function syncSlider(id) {
+  const el = $(id);
+  const pct = ((+el.value - +el.min) / (+el.max - +el.min)) * 100;
+  const s = el.closest('.slider');
+  s.querySelector('.fill').style.width = `${pct}%`;
+  s.querySelector('.knob').style.left = `${pct}%`;
+  $(`${id}-val`).textContent = (+el.value).toFixed(2);
+}
+
+/* The plan card: what the references will actually do, in words, next to the
+   references themselves. Before this the mode had to be inferred from which
+   inputs happened to be visible. */
+function paintPlan(mode, n) {
+  const plan = $('cr-plan');
+  const twoPass = mode === 'img2img' && $('cr-stylematch').checked;
+  const thumbs = (ids, many) => `<span class="thumbs${many ? ' many' : ''}">${ids.map((id, i) => {
+    const r = refRow(id);
+    return `<span>${r ? `<img src="/refs/${esc(r.filename)}" alt="">` : ''}${many ? '' : `<b>${i + 1}</b>`}</span>`;
+  }).join('')}</span><span class="arrow">→</span>`;
+  let cls = '', lead, name, desc;
+  if (mode === 'txt2img') {
+    lead = '<span class="ph"></span>';
+    name = 'text to image';
+    desc = 'No reference — the prompt alone decides the picture.';
+  } else if (mode === 'img2img') {
+    cls = 'lime';
+    lead = thumbs(CR_REFS.slice(0, 1), false);
+    name = twoPass ? 'keep composition · style match' : 'keep composition';
+    desc = `Copies the layout of ref #1 and repaints it at denoise ${(+$('cr-denoise').value).toFixed(2)}` +
+      (twoPass ? ', then fixes colour in a 2nd pass.' : '.');
+  } else {
+    cls = 'teal';
+    lead = thumbs(CR_REFS.slice(0, 4), true);
+    name = 'style only';
+    desc = `Borrows the look of ${refSpan(n)}${n > 1 ? ', blended' : ''}. The composition comes from your prompt.`;
+  }
+  if ($('cr-hires').checked && mode !== 'ipadapter' && !mode.startsWith('ipadapter')) desc += ' Upscaled 1.5× at the end.';
+  plan.className = `plan ${cls}`;
+  plan.innerHTML = `${lead}<span class="t"><span class="mode">${name}</span><span class="desc">${esc(desc)}</span></span>`;
+}
+
 function syncCreate() {
   const n = CR_REFS.length;
 
@@ -601,35 +709,48 @@ function syncCreate() {
     single.disabled = n > 1;
     single.textContent = n > 1
       ? 'keep composition — one reference only'
-      : 'keep composition (single ref)';
+      : 'keep composition (img2img)';
   }
   if (n > 1 && $('cr-mode').value === 'img2img') $('cr-mode').value = '';
 
   const mode = resolvedCreateMode();
   const styleMode = mode.startsWith('ipadapter');
+  const twoPass = mode === 'img2img' && $('cr-stylematch').checked;
 
-  $('cr-ref-count').textContent = n ? `${n} selected` : '';
+  $('cr-refs').classList.toggle('has-on', n > 0);
+  $('cr-ref-count').textContent = `${n} selected`;
+  $('cr-ref-count').style.color = n ? 'var(--lime)' : '';
   $('cr-ip-row').hidden = n === 0;
+  // The checkbox is a shortcut for the dropdown's two real choices.
+  $('cr-keep').checked = mode === 'img2img';
+  $('cr-keep').disabled = n > 1;
+  $('cr-keep-label').textContent = n > 1 ? 'keep composition — one reference only' : 'Keep composition';
   // img2img strength is denoise; IP-Adapter strength is ip_weight.
   $('cr-ipweight-wrap').hidden = !styleMode;
   $('cr-denoise-wrap').hidden = styleMode;
-  $('cr-stylematch-wrap').hidden = styleMode;
+  $('cr-stylematch-wrap').hidden = styleMode || n === 0;
   $('cr-p2-row').hidden = styleMode || n === 0 || !$('cr-stylematch').checked;
   // IP-Adapter graphs have no upscale tail; txt2img and img2img both do.
   $('cr-hires-wrap').hidden = styleMode;
+  syncSlider('cr-denoise');
+  syncSlider('cr-ipweight');
   syncClean(mode === 'img2img' && n === 1 ? CR_REFS[0] : null);
-  $('cr-qty').textContent = `\u00d7${$('cr-count').value}`;
+  $('cr-qty').textContent = `×${$('cr-count').value}${twoPass ? ' · two passes each' : ''}`;
+  paintPlan(mode, n);
 
   const warn = [];
   if (styleMode && !NODE_CAPS.has_ipadapter) {
-    warn.push('The node has no IP-Adapter pack installed — this would fail.');
+    warn.push('The node has no IP-Adapter pack installed — this would fail. Install it on the render node, or drop back to a single reference in keep composition mode.');
   }
-  const hint = $('cr-ref-hint');
-  hint.textContent = warn.length ? warn.join(' ')
-    : n > 1 ? `${n} references blended as one style reference.`
+  $('cr-ref-hint').textContent = n > 1
+    ? `${n} references blended as one style reference.`
     : 'Click to add, in order. Several can be combined — they are blended as one style reference.';
-  hint.style.color = warn.length ? 'var(--amber)' : '';
+  $('cr-warn').hidden = !warn.length;
+  $('cr-warn-text').textContent = warn.join(' ');
   CREATE_BLOCKED = warn.length > 0;
+  $('cr-block').hidden = !CREATE_BLOCKED;
+  const qh = document.querySelector('.task[data-task="create"] [data-queue-hint]');
+  if (qh) qh.hidden = CREATE_BLOCKED;
   updateCreateButton();
 }
 
@@ -641,6 +762,11 @@ $('cr-refs').onclick = (e) => {
   if (at >= 0) CR_REFS.splice(at, 1); else CR_REFS.push(id);
   paintPicks();            // update in place; do not rebuild the DOM
 };
+$('cr-refs').onkeydown = (e) => {
+  if (![' ', 'Enter'].includes(e.key) || !e.target.matches('[data-pick]')) return;
+  e.preventDefault();
+  e.target.click();
+};
 
 /* Toggle selection state on the existing tiles. Rebuilding innerHTML on every
    click detached the node mid-interaction and threw away focus and scroll. */
@@ -648,6 +774,7 @@ function paintPicks() {
   $('cr-refs').querySelectorAll('[data-pick]').forEach((fig) => {
     const at = CR_REFS.indexOf(+fig.dataset.pick);
     fig.classList.toggle('on', at >= 0);
+    fig.setAttribute('aria-pressed', String(at >= 0));
     let n = fig.querySelector('.n');
     if (at >= 0) {
       if (!n) { n = document.createElement('span'); n.className = 'n'; fig.prepend(n); }
@@ -692,13 +819,25 @@ function createValues() {
   return body;
 }
 
+const needPrompt = () => {
+  toast('Write a prompt first.', 'bad');
+  if (isMobile()) switchScreen('studio');
+  $('cr-prompt').focus();
+};
+
 $('btn-cr-preview').onclick = () => {
   const v = createValues();
-  if (!v.prompt) { alert('Write a prompt first.'); return; }
+  if (!v.prompt) return needPrompt();
   const pos = v.quality ? `${CONFIG.quality}, ${v.prompt}` : v.prompt;
+  const mode = resolvedCreateMode();
+  const plan = {
+    txt2img: 'text to image', img2img: 'keep composition', ipadapter_multi: 'style only', ipadapter: 'style only',
+  }[mode] || mode;
+  $('cr-preview-box').hidden = false;
+  $('cr-preview-count').textContent = `${pos.split(',').filter((t) => t.trim()).length} tags`;
+  $('cr-preview-copy').onclick = () => navigator.clipboard?.writeText(pos);
   const el = $('cr-preview');
-  el.hidden = false;
-  el.textContent = `+ ${pos}\n\n- ${v.negative || '(defaults)'}` +
+  el.textContent = `+ ${pos}\n\n\u2212 ${v.negative || '(defaults)'}` +
     (CR_REFS.length
       ? `\n\n${CR_REFS.length} reference(s) via ${v.workflow} at ` +
         (v.ip_weight !== undefined ? `weight ${v.ip_weight}` : `denoise ${v.denoise}`) +
@@ -707,26 +846,25 @@ $('btn-cr-preview').onclick = () => {
         (v.second_pass_negative_add ? `\n  pass 2 avoids: ${v.second_pass_negative_add}` : '') +
         (v.clean_regions ? `\n  ${v.clean_regions.length} region(s) filled out of the reference first` : '')
       : '') +
-    (v.hires ? `\n\nupscaled 1.5\u00d7${v.second_pass ? ' on the final pass' : ''} in a refine pass` : '');
+    (v.hires ? `\n\nupscaled 1.5\u00d7${v.second_pass ? ' on the final pass' : ''} in a refine pass` : '') +
+    `\n\nplan \u00b7 ${plan} \u00b7 ${$('cr-aspect').querySelector('span.on')?.textContent || v.aspect} \u00b7 \u00d7${v.count}` +
+    (v.second_pass ? ' \u00b7 two passes each' : '');
 };
 
 $('btn-create').onclick = async () => {
   const v = createValues();
-  if (!v.prompt) { alert('Write a prompt first.'); return; }
+  if (!v.prompt) return needPrompt();
   // Re-check here as well as in syncCreate: the button is only a hint, and the
   // resolved workflow can change between renders of the panel.
-  if (CREATE_BLOCKED) { alert($('cr-ref-hint').textContent); return; }
+  if (CREATE_BLOCKED) { toast($('cr-warn-text').textContent, 'bad'); return; }
   if (CREATE_BUSY) return;
   CREATE_BUSY = true;
   updateCreateButton();
   try {
-    const { ok, body } = await api('/api/generate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(v),
-    });
-    if (!ok) { alert(body.detail || 'could not queue'); return; }
-    refreshJobs();
-    pollStatus.last = undefined;
+    // queue() confirms with a toast, or shows the server's error in one.
+    await queue('/api/generate', v, (ids) =>
+      `Queued ${ids.length} render${ids.length === 1 ? '' : 's'} · #${ids[0]}` +
+      (v.second_pass ? ' · pass 2 queues as each finishes' : ''));
   } finally {
     CREATE_BUSY = false;
     updateCreateButton();
@@ -736,6 +874,11 @@ $('btn-create').onclick = async () => {
 ['cr-count', 'cr-ipweight', 'cr-denoise'].forEach((id) => { $(id).oninput = syncCreate; });
 $('cr-mode').onchange = syncCreate;
 $('cr-stylematch').onchange = syncCreate;
+$('cr-hires').onchange = syncCreate;
+$('cr-keep').onchange = () => {
+  $('cr-mode').value = $('cr-keep').checked ? 'img2img' : 'ipadapter_multi';
+  $('cr-mode').dispatchEvent(new Event('change', { bubbles: true }));
+};
 
 /* ---------- create: clean lettering out of an img2img reference ----------
    img2img at 0.45 copies everything in the source, so a reference screenshot's
@@ -752,6 +895,10 @@ function exitCleanPreview() {
   URL.revokeObjectURL(CLEAN_PREVIEW);
   CLEAN_PREVIEW = null;
   $('cr-clean').classList.remove('previewing');
+  $('cr-clean-wrap').classList.remove('previewing');
+  $('cr-clean-title').textContent = 'clean up the reference';
+  $('cr-clean-note').hidden = true;
+  $('btn-clean-clear').hidden = false;
   $('btn-clean-preview').textContent = 'Preview fill';
   const ref = CR_REF_ROWS.find((r) => r.id === CLEAN_REF);
   if (ref) $('cr-clean-img').src = `/refs/${ref.filename}`;
@@ -864,7 +1011,13 @@ $('btn-clean-preview').onclick = async (e) => {
     CLEAN_PREVIEW = URL.createObjectURL(blob);
     $('cr-clean-img').src = CLEAN_PREVIEW;
     $('cr-clean').classList.add('previewing');
+    $('cr-clean-wrap').classList.add('previewing');
+    $('cr-clean-title').textContent = 'filled result';
+    $('cr-clean-note').hidden = false;
+    $('btn-clean-clear').hidden = true;
     btn.textContent = 'Back to boxes';
+  } catch {
+    toast('Could not load the fill preview. Please try again.', 'bad');
   } finally {
     btn.disabled = !CLEAN_PREVIEW && !(CR_CLEAN[CLEAN_REF] || []).length;
   }
@@ -1132,51 +1285,136 @@ $('btn-extend').onclick = async (e) => {
 };
 
 /* ---------- queue ---------- */
+// SQLite writes UTC as 'YYYY-MM-DD HH:MM:SS' with no zone marker.
+const fromUtc = (t) => (t ? new Date(`${String(t).replace(' ', 'T')}Z`) : null);
+const toUtc = (d) => d.toISOString().slice(0, 16).replace('T', ' ');
+const hhmm = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function ago(t) {
+  const d = fromUtc(t);
+  if (!d || isNaN(d)) return '';
+  const s = Math.max(0, (Date.now() - d) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// "tomorrow 01:00 · 2026-09-15 06:00 UTC": local time for reading, UTC because
+// that is what the server stores and compares.
+function whenLocal(t) {
+  const d = fromUtc(t);
+  if (!d || isNaN(d)) return String(t);
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(new Date())) / 86400000);
+  const label = diff === 0 ? 'today' : diff === 1 ? 'tomorrow'
+    : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+  return `${label} ${hhmm(d)} · ${String(t).slice(0, 16)} UTC`;
+}
+
+const SERVER_SIDE = new Set(['reel', 'deliver']);
+const parseParams = (j) => { try { return JSON.parse(j.params); } catch { return {}; } };
+
+function jobKind(params) {
+  const w = params.workflow;
+  if (w === 'reel') return 'reel';
+  if (w === 'deliver') return 'Instagram encode';
+  if (w === 'outpaint') return 'extend';
+  if (w === 'wan_i2v') return params.video_backend === 'ltx' ? 'animate · LTX' : 'animate';
+  return params.free_prompt ? 'create' : 'fuse';
+}
+
+let JOBS = [];
+
+function jobRow(j, pass) {
+  const params = parseParams(j);
+  const kind = jobKind(params);
+  const server = SERVER_SIDE.has(params.workflow);
+  const failed = j.status === 'failed';
+  const running = j.status === 'running' && PROGRESS && PROGRESS.job_id === j.id;
+  const size = params.workflow === 'wan_i2v' ? params.video_size : params.aspect;
+
+  const meta = [esc(kind)];
+  if (size && !server) meta.push(esc(size));
+  if (j.attempts > 1) meta.push(`attempt ${j.attempts}`);
+  if (pass === 1) meta.push(j.status === 'done' ? `done ${ago(j.finished_at)}` : 'pass 1 of 2 · pass 2 queues when this finishes');
+  else if (pass === 2) meta.push(`from #${j.src_job_id}'s output`);
+  else if (j.status === 'done') meta.push(`done ${ago(j.finished_at)}`);
+  if (failed) meta.push(`failed ${ago(j.finished_at)}`);
+  if (j.status === 'cancelled' && j.finished_at) meta.push(`cancelled ${ago(j.finished_at)}`);
+  if (j.status === 'paused') meta.push(j.started_at ? 'paused · VRAM released' : 'held before it started');
+  if (j.not_before && j.status === 'queued') meta.push(`<span class="sched">scheduled ${esc(whenLocal(j.not_before))}</span>`);
+  if (running) {
+    meta.push(`<span class="live" data-job-progress="${j.id}">${esc(PROGRESS.stage || '')}${PROGRESS.steps ? ` ${PROGRESS.step}/${PROGRESS.steps}` : ''}</span>`);
+  }
+  if (server && j.status === 'running') meta.push('server-side, no GPU');
+
+  // Server-side jobs never read the control column, so they get no pause or
+  // stop - offering one would do nothing. They finish in seconds anyway.
+  const acts = [];
+  if (j.status === 'running' && !server) acts.push(`<button data-pause="${j.id}">pause</button>`, `<button data-stop="${j.id}">stop</button>`);
+  if (j.status === 'queued') {
+    acts.push(pass === 2 && !j.not_before
+      ? `<button data-pause="${j.id}" class="plain">hold</button>`
+      : `<button data-hold="${j.id}">hold until…</button>`);
+    acts.push(`<button data-stop="${j.id}">stop</button>`);
+  }
+  if (j.status === 'paused') acts.push(`<button data-resume="${j.id}">resume</button>`, `<button data-stop="${j.id}">stop</button>`);
+  if (failed || j.status === 'cancelled') {
+    acts.push(`<button data-requeue="${j.id}">requeue</button>`);
+    if (j.error) acts.push(`<button data-copyerr="${j.id}">copy error</button>`);
+  }
+  if (pass && j.status === 'done' && j.out_filename && !isVideo(j.out_filename)) {
+    acts.push(`<img class="jthumb" src="/thumbs/${esc(j.out_filename)}.jpg" alt="">`);
+  }
+
+  return `
+    <div class="job ${j.status}${server ? ' server' : ''}">
+      <div class="st">
+        <span class="pill ${j.status}"><i></i><span>${j.status}</span></span>
+        <span class="jid">#${j.id}${pass ? ` <span class="pass">pass ${pass}</span>` : ''}</span>
+      </div>
+      <div class="mid">
+        ${failed ? `<div class="err">${esc(j.error)}</div>` : `<span class="prompt">${esc(j.prompt)}</span>`}
+        ${running ? `
+        <div class="bar ${PROGRESS.estimated ? 'estimated' : ''}" data-bar="${j.id}" ${PROGRESS.percent == null ? 'hidden' : ''}>
+          <b style="width:${Math.round(PROGRESS.percent || 0)}%"></b>
+        </div>` : ''}
+        <span class="jmeta">${meta.join(' · ')}</span>
+      </div>
+      <div class="act">${acts.join('')}</div>
+    </div>`;
+}
+
 async function refreshJobs() {
   const { ok, body } = await api('/api/jobs');
   if (!ok || !Array.isArray(body)) return;
+  JOBS = body;
   const n = (s) => body.filter((j) => j.status === s).length;
   $('queue-meta').textContent =
     `${n('queued')} queued · ${n('running')} running · ${n('failed')} failed`;
 
-  $('jobs').innerHTML = body.map((j) => {
-    const params = (() => { try { return JSON.parse(j.params); } catch { return {}; } })();
-    const kind = params.workflow === 'reel' ? 'reel'
-      : params.workflow === 'deliver' ? 'Instagram encode'
-      : params.workflow === 'outpaint' ? 'extend'
-      : params.workflow === 'wan_i2v' ? 'animate' : 'fuse';
-    const failed = j.status === 'failed';
-    const running = j.status === 'running' && PROGRESS && PROGRESS.job_id === j.id;
-    return `
-    <div class="job ${j.status}">
-      <div class="st">
-        <span class="pill ${j.status}"><i></i><span>${j.status}</span></span>
-        <span class="jid">#${j.id}</span>
-      </div>
-      <div class="mid">
-        ${failed
-          ? `<div class="err">${esc(j.error)}</div>`
-          : `<span class="prompt">${esc(j.prompt)}</span>`}
-        <span class="jmeta">${esc(kind)}${params.aspect ? ` · ${esc(params.aspect)}` : ''}${j.attempts > 1 ? ` · attempt ${j.attempts}` : ''}${j.not_before ? ` · scheduled ${esc(j.not_before)} UTC` : ''}${
-          running ? `<span data-job-progress="${j.id}"> · ${esc(PROGRESS.stage)}${PROGRESS.steps ? ` ${PROGRESS.step}/${PROGRESS.steps}` : ''}</span>` : ''}</span>
-      </div>
-      <div class="act">
-        ${j.status === 'running' ? `<button data-pause="${j.id}">pause</button>` : ''}
-        ${j.status === 'queued' ? `<button data-pause="${j.id}">hold</button>` : ''}
-        ${j.status === 'paused' ? `<button data-resume="${j.id}" class="warn">resume</button>` : ''}
-        ${['running', 'queued', 'paused'].includes(j.status) ? `<button data-stop="${j.id}">stop</button>` : ''}
-      </div>
-      ${running ? `
-      <div class="bar ${PROGRESS.estimated ? 'estimated' : ''}" data-bar="${j.id}" style="grid-column:2/-1" ${PROGRESS.percent == null ? 'hidden' : ''}>
-        <b style="width:${Math.round(PROGRESS.percent || 0)}%"></b>
-      </div>` : ''}
-      ${(j.status === 'failed' || j.status === 'cancelled') ? `
-      <div class="fixes" style="grid-column:2/-1">
-        <button data-requeue="${j.id}" class="warn">requeue</button>
-        ${j.error ? `<button data-copyerr="${j.id}">copy error</button>` : ''}
-      </div>` : ''}
-    </div>`;
-  }).join('') || '<p class="hint">Queue is empty.</p>';
+  // Style match is one request that becomes two jobs: pass 2 is created from
+  // pass 1's output when pass 1 finishes. Frame them together.
+  const byId = new Map(body.map((j) => [j.id, j]));
+  const isPass1 = (j) => !!parseParams(j).second_pass;
+  const pass2Of = new Map();
+  for (const j of body) {
+    const parent = j.src_job_id != null && byId.get(j.src_job_id);
+    if (parent && isPass1(parent) && j.batch_id && j.batch_id === parent.batch_id &&
+        parseParams(j).workflow === 'img2img' && !isPass1(j)) pass2Of.set(parent.id, j);
+  }
+  const children = new Set([...pass2Of.values()].map((j) => j.id));
+
+  const out = [];
+  for (const j of body) {
+    if (children.has(j.id)) continue;        // drawn inside its pass-1 group
+    if (!isPass1(j)) { out.push(jobRow(j)); continue; }
+    const second = pass2Of.get(j.id);
+    out.push(`<div class="smgroup"><div class="side"><span>style match</span></div><div class="rows">
+      ${jobRow(j, 1)}${second ? jobRow(second, 2) : ''}</div></div>`);
+  }
+  $('jobs').innerHTML = out.join('') || '<p class="hint">Queue is empty.</p>';
 }
 
 // Queue-level pause. Distinct from pausing a job: whatever is already on the
@@ -1188,13 +1426,103 @@ if ($('queue-pause')) $('queue-pause').onclick = async () => {
   const on = !NODE.queue_paused;
   const { ok, body } = await api(`/api/queue/${on ? 'pause' : 'resume'}`, { method: 'POST' });
   if (!ok) { toast(body.detail || 'Could not change the queue.', 'bad'); return; }
-  toast(on ? 'Queue paused - the current render will finish' : 'Queue resumed');
+  toast(on ? 'Queue paused — the current render will finish' : 'Queue resumed', on ? 'warn' : 'ok');
   pollStatus.last = undefined;
+  pollStatus();
   refreshJobs();
 };
 
+/* ---------- hold until ---------- */
+let HOLD_JOB = null;
+
+function holdPresets() {
+  const now = new Date();
+  const at = (days, h) => { const d = new Date(now); d.setDate(d.getDate() + days); d.setHours(h, 0, 0, 0); return d; };
+  const tonight = at(now.getHours() < 1 ? 0 : 1, 1);   // the next 01:00
+  const inH = (d) => `in ${Math.max(1, Math.round((d - now) / 3600000))}h`;
+  const six = new Date(now.getTime() + 6 * 3600000);
+  const nine = at(1, 9);
+  return [
+    { label: 'tonight 1:00', when: tonight, aside: inH(tonight) },
+    { label: 'in 6 hours', when: six, aside: hhmm(six) },
+    { label: 'tomorrow 9:00', when: nine, aside: inH(nine) },
+  ];
+}
+
+function openHold(btn, id) {
+  const j = JOBS.find((x) => x.id === id);
+  HOLD_JOB = id;
+  const presets = holdPresets();
+  $('hold-list').innerHTML =
+    `<button type="button" data-hold-pause><span>hold until I resume</span><em>no time</em></button>` +
+    presets.map((p, i) => `<button type="button" data-hold-at="${i}"><span>${p.label}</span><em>${p.aside}</em></button>`).join('') +
+    (j?.not_before ? '<button type="button" data-hold-clear><span>clear schedule · run when ready</span></button>' : '');
+  $('hold-list').presets = presets;
+  const d = presets[0].when;
+  const pad = (x) => String(x).padStart(2, '0');
+  $('hold-at').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const pop = $('hold-pop');
+  pop.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = `${Math.max(16, Math.min(r.right - w, innerWidth - w - 16))}px`;
+  pop.style.top = `${r.bottom + 6 + h > innerHeight - 16 ? Math.max(16, r.top - h - 6) : r.bottom + 6}px`;
+  pop.querySelector('button')?.focus();
+}
+
+const closeHold = () => { $('hold-pop').hidden = true; HOLD_JOB = null; };
+
+async function schedule(id, when) {
+  const { ok, body } = await api(`/api/jobs/${id}/schedule`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ not_before: when ? toUtc(when) : null }),
+  });
+  if (!ok) { toast(body.detail || 'Could not schedule that job.', 'bad'); return; }
+  toast(when ? `Job #${id} held until ${hhmm(when)}` : `Job #${id} will run when the node is ready`, 'teal');
+  refreshJobs();
+  pollStatus.last = undefined;
+}
+
+$('hold-pop').onclick = async (e) => {
+  const id = HOLD_JOB;
+  if (id == null) return;
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.id === 'hold-go') {
+    const when = $('hold-at').value ? new Date($('hold-at').value) : null;
+    if (!when || isNaN(when)) { toast('Pick a time to hold until.', 'bad'); return; }
+    if (when < new Date()) { toast('That time has already passed.', 'bad'); return; }
+    closeHold();
+    return schedule(id, when);
+  }
+  closeHold();
+  if ('holdPause' in b.dataset) {
+    const { ok, body } = await api(`/api/jobs/${id}/pause`, { method: 'POST' });
+    if (!ok) { toast(body.detail || 'Could not hold.', 'bad'); return; }
+    toast(`Job #${id} held`, 'warn');
+    refreshJobs();
+    pollStatus.last = undefined;
+  } else if ('holdClear' in b.dataset) {
+    schedule(id, null);
+  } else if (b.dataset.holdAt != null) {
+    schedule(id, $('hold-list').presets[+b.dataset.holdAt].when);
+  }
+};
+document.addEventListener('click', (e) => {
+  if ($('hold-pop').hidden || e.target.closest('#hold-pop, [data-hold]')) return;
+  closeHold();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('hold-pop').hidden) closeHold(); });
+$('jobs').closest('.tab').addEventListener('scroll', () => { if (!$('hold-pop').hidden) closeHold(); });
+
 $('jobs').onclick = async (e) => {
-  const d = e.target.dataset;
+  const b = e.target.closest('button');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.hold) {
+    if (HOLD_JOB === +d.hold && !$('hold-pop').hidden) return closeHold();
+    return openHold(b, +d.hold);
+  }
   if (d.cancel) {
     await api(`/api/jobs/${d.cancel}`, { method: 'DELETE' });
   } else if (d.pause) {
@@ -1202,7 +1530,7 @@ $('jobs').onclick = async (e) => {
     if (!ok) { toast(body.detail || 'Could not pause.', 'bad'); return; }
     // A running job pauses at the node's next poll, not instantly. Saying so
     // stops it looking broken for the couple of seconds in between.
-    toast(body.pending ? `Job #${d.pause} stopping at the node…` : `Job #${d.pause} held`);
+    toast(body.pending ? `Job #${d.pause} stopping at the node…` : `Job #${d.pause} held`, 'warn');
   } else if (d.resume) {
     const { ok, body } = await api(`/api/jobs/${d.resume}/resume`, { method: 'POST' });
     if (!ok) { toast(body.detail || 'Could not resume.', 'bad'); return; }
@@ -1216,10 +1544,12 @@ $('jobs').onclick = async (e) => {
     if (!ok) { toast(body.detail || 'Could not requeue.', 'bad'); return; }
     toast(`Job #${d.requeue} back on the queue`);
   } else if (d.copyerr) {
-    const j = (await api('/api/jobs')).body.find((x) => x.id === +d.copyerr);
-    navigator.clipboard?.writeText(j?.error || '');
-    e.target.textContent = 'copied';
-    setTimeout(() => { e.target.textContent = 'copy error'; }, 1200);
+    const j = JOBS.find((x) => x.id === +d.copyerr);
+    try {
+      await navigator.clipboard.writeText(j?.error || '');
+    } catch { toast('Could not copy the error. Select the error text to copy it.', 'bad'); return; }
+    b.textContent = 'copied';
+    setTimeout(() => { b.textContent = 'copy error'; }, 1200);
     return;
   } else return;
   refreshJobs();
@@ -1247,11 +1577,16 @@ function syncLbNav() {
   $('lb-prev').disabled = at <= 0;
   $('lb-next').disabled = at < 0 || at >= list.length - 1;
   $('lb-prev').hidden = $('lb-next').hidden = list.length < 2;
+  $('lb-pos').textContent = at >= 0 ? `${at + 1} / ${list.length}` : '';
+  $('lb-keys').hidden = list.length < 2;
 }
 
 function openLightbox(img) {
+  const opening = $('lightbox').hidden;
+  if (opening) lbReturnFocus = document.activeElement;
   CURRENT = img;
   $('lightbox').hidden = false;
+  if (opening) $('lb-close').focus({ preventScroll: true });
   $('deliver-box').hidden = true;
   const vid = isVideo(img.filename);
   $('lb-img').hidden = vid;
@@ -1275,21 +1610,59 @@ function openLightbox(img) {
   renderCaption(img.caption, img.hashtags);
   syncLbNav();
 
-  // "Reuse these settings" only means something for a render made from a
-  // recipe; extends and clips have no source A / source B to put back.
-  const recipe = (() => {
-    try { return JSON.parse(img.params || '{}').recipe || null; } catch { return null; }
-  })();
-  $('lb-reuse').hidden = !(recipe && recipe.subject_a);
+  const params = parseParams(img);
+  const recipe = params.recipe;
+  const create = params.free_prompt && !vid && !img.src_image_id && params.workflow !== 'outpaint';
+  $('lb-reuse').hidden = !create && !(recipe && recipe.subject_a);
   $('lb-reuse').onclick = () => {
-    $('subject-a').value = recipe.subject_a || '';
-    $('subject-b').value = recipe.subject_b || '';
-    $('mode').value = recipe.mode || 'design_fusion';
-    $('extra').value = recipe.extra || '';
-    syncHint();
+    const extraNegative = (img.negative || '').startsWith(CONFIG.negative)
+      ? img.negative.slice(CONFIG.negative.length).replace(/^,\s*/, '') : img.negative || '';
+    $('steps').value = params.steps ?? 30;
+    $('cfg').value = params.cfg ?? 5;
+    const checkpoint = params.checkpoint || '';
+    if (checkpoint && ![...$('checkpoint').options].some((o) => o.value === checkpoint)) {
+      $('checkpoint').add(new Option(checkpoint, checkpoint));
+    }
+    $('checkpoint').value = checkpoint;
+    if (create) {
+      $('cr-prompt').value = img.prompt || '';
+      $('cr-quality').checked = false; // saved prompt already contains its quality tags
+      $('cr-negative').value = extraNegative;
+      $('cr-aspect').value = params.aspect || 'portrait';
+      $('cr-count').value = 1;
+      let refs;
+      try { refs = JSON.parse(img.ref_ids || '[]'); } catch { refs = []; }
+      if (!refs.length && img.ref_id) refs = [img.ref_id];
+      CR_REFS = refs.filter((id) => CR_REF_ROWS.some((r) => r.id === id));
+      $('cr-mode').value = params.workflow === 'ipadapter' ? 'ipadapter_multi' : params.workflow || '';
+      $('cr-denoise').value = params.denoise ?? 0.65;
+      $('cr-ipweight').value = params.ip_weight ?? 0.7;
+      $('cr-stylematch').checked = !!params.second_pass;
+      $('cr-p2-add').value = params.second_pass_prompt_add || '';
+      $('cr-p2-avoid').value = params.second_pass_negative_add || '';
+      $('cr-hires').checked = !!params.hires;
+      exitCleanPreview();
+      CLEAN_REV++;
+      if (CR_REFS.length === 1) CR_CLEAN[CR_REFS[0]] = params.clean_regions || [];
+      paintPicks();
+      if (refs.length !== CR_REFS.length) toast('Some references were deleted. Choose replacements before generating.', 'warn');
+    } else {
+      $('subject-a').value = recipe.subject_a || '';
+      $('subject-b').value = recipe.subject_b || '';
+      $('mode').value = recipe.mode || 'design_fusion';
+      $('extra').value = recipe.extra || '';
+      $('negative').value = extraNegative;
+      $('aspect').value = params.aspect || 'portrait';
+      $('ref').value = img.ref_id || '';
+      $('workflow').value = params.workflow || '';
+      $('denoise').value = params.denoise ?? 0.65;
+      $('ip-weight').value = params.ip_weight ?? 0.7;
+      syncHint();
+    }
+    syncCounts();
     saveForm();
     closeLb();
-    switchTask('fuse');
+    switchTask(create ? 'create' : 'fuse');
     if (isMobile()) switchScreen('studio');
     toast(`Loaded the recipe from #${img.id}`);
   };
@@ -1297,6 +1670,24 @@ function openLightbox(img) {
 
 $('lb-prev').onclick = () => stepLightbox(-1);
 $('lb-next').onclick = () => stepLightbox(1);
+
+// A horizontal touch swipe pages stills; vertical drags keep scrolling the
+// detail sheet. Ignore the video's native controls and additional fingers.
+let lbTouch = null;
+$('lb-stage').addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch' || !e.isPrimary || e.target.closest('button, video')) return;
+  lbTouch = { id: e.pointerId, x: e.clientX, y: e.clientY, key: CURRENT?.key };
+});
+$('lb-stage').addEventListener('pointerup', (e) => {
+  if (!lbTouch || lbTouch.id !== e.pointerId) return;
+  const { x, y, key } = lbTouch;
+  lbTouch = null;
+  const dx = e.clientX - x, dy = e.clientY - y;
+  if (CURRENT?.key === key && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    stepLightbox(dx < 0 ? 1 : -1);
+  }
+});
+$('lb-stage').addEventListener('pointercancel', () => { lbTouch = null; });
 
 function setFav(on) {
   const b = $('lb-fav');
@@ -1313,12 +1704,24 @@ function renderCaption(caption, tags) {
     : '<div class="none">No caption drafted.</div>';
 }
 
-const closeLb = () => { $('lightbox').hidden = true; $('lb-vid').pause?.(); };
+let lbReturnFocus = null;
+const closeLb = () => {
+  $('lightbox').hidden = true;
+  $('lb-vid').pause?.();
+  lbReturnFocus?.focus?.({ preventScroll: true });
+};
 $('lb-close').onclick = closeLb;
 $('lightbox').onclick = (e) => { if (e.target.id === 'lightbox') closeLb(); };
 document.addEventListener('keydown', (e) => {
   if ($('lightbox').hidden) return;
   if (e.key === 'Escape') return closeLb();
+  if (e.key === 'Tab') {
+    const controls = [...$('lightbox').querySelectorAll('button, a[href], input, textarea, select, [tabindex="0"]')]
+      .filter((el) => !el.disabled && el.getClientRects().length);
+    const next = controls[(controls.indexOf(document.activeElement) + (e.shiftKey ? -1 : 1) + controls.length) % controls.length];
+    if (next) { e.preventDefault(); next.focus(); }
+    return;
+  }
   if (e.target.closest('input, textarea, select, video, [contenteditable="true"]')) return;
   if (e.key === 'ArrowLeft') { e.preventDefault(); stepLightbox(-1); }
   if (e.key === 'ArrowRight') { e.preventDefault(); stepLightbox(1); }
@@ -1347,7 +1750,21 @@ $('lb-caption-btn').onclick = async (e) => {
   refreshGallery();
 };
 
-$('lb-animate').onclick = () => { $('animate-box').hidden = !$('animate-box').hidden; };
+function syncAnimate() {
+  // Both backends accept these six canvases; the frame multiple is enforced
+  // by the backend builder. Keep the chosen model explicit in the request.
+  if (!$('an-backend').value) $('an-backend').value = 'wan';
+  if (!$('an-size').value) $('an-size').value = 'story_540';
+  const ltx = $('an-backend').value === 'ltx';
+  $('an-go').textContent = `Queue ${ltx ? 'LTX' : 'WAN'} clip`;
+}
+$('an-backend').addEventListener('change', syncAnimate);
+$('an-size').addEventListener('change', syncAnimate);
+$('lb-animate').onclick = () => {
+  $('animate-box').hidden = !$('animate-box').hidden;
+  $('deliver-box').hidden = true;
+  syncAnimate();
+};
 
 $('lb-deliver').onclick = () => {
   $('deliver-box').hidden = !$('deliver-box').hidden;
@@ -1365,13 +1782,16 @@ $('deliver-box').onclick = async (e) => {
 $('an-go').onclick = async (e) => {
   const motion = $('an-prompt').value.trim();
   if (!motion) { toast('Describe the motion you want.', 'bad'); $('an-prompt').focus(); return; }
+  if (!$('an-seconds').reportValidity()) return;
   const btn = e.currentTarget;
   btn.disabled = true;
   const body = await queue('/api/generate', {
     prompt: motion,
+    quality: false,
     negative_full: 'static, still image, frozen, jpeg artifacts, watermark, text',
     workflow: 'wan_i2v', src_image_id: CURRENT.id, count: 1,
     seconds: +$('an-seconds').value, video_size: $('an-size').value,
+    video_backend: $('an-backend').value,
   }, (ids) => `Queued a clip from #${CURRENT.id} · job #${ids[0]}`);
   btn.disabled = false;
   if (body) closeLb();
@@ -1397,6 +1817,7 @@ $('lb-delete').onclick = async () => {
 function switchTask(task) {
   document.querySelectorAll('.tabs.sub button').forEach((b) => b.classList.toggle('active', b.dataset.task === task));
   document.querySelectorAll('.task').forEach((d) => { d.hidden = d.dataset.task !== task; });
+  placeSampler(task);
   REEL_MODE = task === 'reel';
   document.querySelector('.output').classList.toggle('picking', REEL_MODE);
   $('picking-bar').hidden = !REEL_MODE;

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -49,6 +49,7 @@ async def api_config():
         "checkpoint": CHECKPOINT,
         # So the Create task can show exactly what it will prepend.
         "quality": QUALITY,
+        "negative": compile_negative(),
     }
 
 
@@ -347,9 +348,17 @@ async def api_deliver(image_id: int, payload: dict):
 # ---------- queue + gallery ----------
 
 @app.get("/api/jobs")
-async def api_jobs(limit: int = 40):
+async def api_jobs(limit: int = Query(40, ge=1, le=500)):
+    # src_job_id links a style-match pass 2 (and an animate clip) to the job
+    # whose output it started from, so the queue can show the pair as one
+    # request. out_filename is that job's latest image, for a thumbnail.
     with db() as conn:
-        return rows(conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)))
+        return rows(conn.execute(
+            "SELECT j.*, i.job_id AS src_job_id, "
+            "(SELECT o.filename FROM images o WHERE o.job_id = j.id "
+            " ORDER BY o.id DESC LIMIT 1) AS out_filename "
+            "FROM jobs j LEFT JOIN images i ON i.id = j.src_image_id "
+            "ORDER BY j.id DESC LIMIT ?", (limit,)))
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -493,9 +502,9 @@ async def api_requeue(job_id: int):
 
 
 @app.get("/api/images")
-async def api_images(limit: int = 120, favourites: bool = False):
+async def api_images(limit: int = Query(120, ge=1, le=500), favourites: bool = False):
     q = (
-        "SELECT i.*, j.prompt, j.params FROM images i "
+        "SELECT i.*, j.prompt, j.negative, j.params, j.ref_ids, j.ref_id, j.src_image_id FROM images i "
         "JOIN jobs j ON j.id = i.job_id "
         f"{'WHERE i.favourite=1 ' if favourites else ''}"
         "ORDER BY i.id DESC LIMIT ?"
