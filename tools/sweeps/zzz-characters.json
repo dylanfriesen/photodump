@@ -1,0 +1,26 @@
+{
+  "name": "zzz-characters-1",
+  "_why": "Zenless Zone Zero set for the page, staged as a sweep so the results group by character, and so it doubles as the test of which ZZZ characters waiNSFWIllustrious_v14 knows by tag alone. Cells differ ONLY in the character tag: a generic-looking result means the checkpoint does not know that character, and is the case for a LoRA. Tiers come from Danbooru post counts before 2024-10 (checked 2026-09-15): likely known = hundreds to thousands, borderline = under 300, probably unknown = zero (first posted Dec 2024+). Parentheses are escaped because ComfyUI reads (x) as prompt weighting. txt2img hires (832x1216 -> 1248x1824) is the size already proven on the 16GB card.",
+  "seeds": [20260915, 777],
+  "base": {
+    "prompt": "zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background",
+    "quality": true,
+    "negative": "nsfw, nude",
+    "aspect": "portrait",
+    "steps": 30,
+    "cfg": 5.0,
+    "hires": true
+  },
+  "cells": [
+    {"label": "ellen joe · likely known", "set": {"prompt": "ellen joe, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "nicole demara · likely known", "set": {"prompt": "nicole demara, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "jane doe · likely known", "set": {"prompt": "jane doe \\(zenless zone zero\\), zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "zhu yuan · likely known", "set": {"prompt": "zhu yuan, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "belle · likely known", "set": {"prompt": "belle \\(zenless zone zero\\), zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "anby demara · likely known", "set": {"prompt": "anby demara, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "hoshimi miyabi · borderline", "set": {"prompt": "hoshimi miyabi, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "burnice white · borderline", "set": {"prompt": "burnice white, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "tsukishiro yanagi · borderline", "set": {"prompt": "tsukishiro yanagi, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}},
+    {"label": "evelyn chevalier · probably unknown", "set": {"prompt": "evelyn chevalier, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, dynamic pose, city street at night, neon lights, rain, wet pavement reflections, urban fantasy, cinematic lighting, detailed background"}}
+  ]
+}

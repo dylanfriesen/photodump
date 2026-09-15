@@ -29,6 +29,8 @@
   .picker .n { font: 500 10px var(--mono); color: var(--mute-3); }
 
   .lead { display: grid; grid-template-columns: 220px 1fr; gap: 18px; align-items: start; }
+  .lead.noref { grid-template-columns: 1fr; }
+  .zoom .pair.single { grid-template-columns: 1fr; }
   @media (max-width: 700px) { .lead { grid-template-columns: 1fr; } }
   .refcard { background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; }
   .refcard img { display: block; width: 100%; height: auto; cursor: zoom-in; }
@@ -53,6 +55,8 @@
   .chip { font: 500 10px var(--mono); color: var(--teal-soft); background: rgba(79,214,192,.08); border: 1px solid rgba(79,214,192,.2); border-radius: var(--r-sm); padding: 2px 6px; }
   .runs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; padding: 14px; }
   .run { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .run.one { grid-template-columns: 1fr; }
+  .runs.one { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
   figure { margin: 0; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   figure .frame { aspect-ratio: 4 / 5; background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; display: flex; align-items: center; justify-content: center; }
   figure img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
@@ -113,7 +117,7 @@ async function getJSON(url) {
 
 function chips(set) {
   return Object.entries(set || {}).map(([k, v]) =>
-    `<span class="chip">${esc(k)}=${esc(Array.isArray(v) ? (v.length ? `${v.length} boxes` : 'none') : v)}</span>`).join('');
+    `<span class="chip" title="${esc(k)}=${esc(v)}">${esc(k)}=${esc(Array.isArray(v) ? (v.length ? `${v.length} boxes` : 'none') : String(v).length > 48 ? `${String(v).slice(0, 48)}…` : v)}</span>`).join('');
 }
 
 /* The number a run is judged by: its final image. That is pass 2 when the
@@ -161,16 +165,16 @@ function render() {
 
   const ref = DATA.reference;
   view.innerHTML = `
-    <div class="lead">
+    <div class="lead ${ref ? '' : 'noref'}">
       ${ref ? `<div class="refcard"><img src="/refs/${encodeURIComponent(ref.filename)}" data-ref alt="reference">
-        <div class="body"><span class="cap">reference</span><span class="meta">#${ref.id} · ${esc(ref.label)}</span></div></div>` : '<div></div>'}
+        <div class="body"><span class="cap">reference</span><span class="meta">#${ref.id} · ${esc(ref.label)}</span></div></div>` : ''}
       <div class="summary">
         <h1>${esc(DATA.name)}</h1>
         <p>${done} of ${expected} renders landed.
           ${pending ? 'The rest render the next time the desktop is awake &mdash; this page refreshes itself.' : 'Complete.'}</p>
         <div class="bar ${pending ? 'waiting' : ''}"><i style="width:${expected ? Math.round(100 * done / expected) : 0}%"></i></div>
-        <p>Scores are the mean distance from the reference's look on ${DATA.axes.length} axes (${DATA.axes.join(', ')}); lower is closer.
-          They rank candidates &mdash; they do not judge them. Hue is ignored on purpose, so a correct hair colour is never penalised. Look before deciding.</p>
+        ${ref ? `<p>Scores are the mean distance from the reference's look on ${DATA.axes.length} axes (${DATA.axes.join(', ')}); lower is closer.
+          They rank candidates &mdash; they do not judge them. Hue is ignored on purpose, so a correct hair colour is never penalised. Look before deciding.</p>` : '<p>No reference image, so nothing to score against: this sweep is judged by eye.</p>'}
         ${ranked.length ? `<div class="scroll"><table class="rank">
           <thead><tr><th>cell</th><th>settings</th><th style="text-align:right">scored</th><th style="text-align:right">mean distance</th></tr></thead>
           <tbody>${scored.slice().sort((a, b) => (a.mean ?? 9) - (b.mean ?? 9)).map((s) => `
@@ -182,8 +186,8 @@ function render() {
     ${DATA.cells.map((c) => `
       <section class="cell">
         <div class="cell-head"><h2>${esc(c.label)}</h2>${chips(c.set)}</div>
-        <div class="runs">${c.runs.map((r) => `
-          <div class="run">${figure(r.pass1, 'pass 1', false)}${chained ? figure(r.pass2, 'pass 2', c.label === bestLabel) : ''}</div>`).join('')}
+        <div class="runs ${chained ? '' : 'one'}">${c.runs.map((r) => `
+          <div class="run ${chained ? '' : 'one'}">${figure(r.pass1, chained ? 'pass 1' : 'render', !chained && c.label === bestLabel)}${chained ? figure(r.pass2, 'pass 2', c.label === bestLabel) : ''}</div>`).join('')}
         </div>
       </section>`).join('')}`;
 
@@ -233,8 +237,11 @@ $('picker').onclick = (e) => {
 
 $('view').onclick = (e) => {
   const img = e.target.closest('img[data-zoom], img[data-ref]');
-  if (!img || !DATA?.reference) return;
-  $('zoom-ref').src = `/refs/${encodeURIComponent(DATA.reference.filename)}`;
+  if (!img || !DATA) return;
+  const ref = DATA.reference;
+  $('zoom-ref').parentElement.hidden = !ref;
+  document.querySelector('.zoom .pair').classList.toggle('single', !ref);
+  if (ref) $('zoom-ref').src = `/refs/${encodeURIComponent(ref.filename)}`;
   $('zoom-img').src = img.src;
   $('zoom-meta').textContent = img.dataset.label || 'reference';
   $('zoom-title').textContent = DATA.name;
