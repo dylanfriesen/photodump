@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Nightly photodump snapshot. Installed in dylan's crontab:
 #
-#   50 3 * * * /home/dylan/photodump/tools/backup.sh
+#   15 6 * * * /home/dylan/photodump/tools/backup.sh
 #
 # The work happens inside the live container (see app/backup.py for why).
-# Output goes to data/backups/backup.log; a failure also lands in the
-# container-independent log beside this script's data dir so a stopped
-# container is noticed rather than silently skipping every night.
+# Output goes to data/backups/backup.log. If the container is down, the failure
+# goes to ~/photodump-backup-failures.log instead, so a stopped container is
+# noticed rather than silently skipping every night.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 log=data/backups/backup.log

@@ -175,6 +175,34 @@ kanto, a reel made entirely from uploads needs **no GPU at all** — it works
 with the desktop switched off. Shots are addressed as `{src, id}` so the two
 sources can be mixed in any order.
 
+**Finishing touches, all on kanto:**
+
+- *start the track at* skips into the song, so the first cut lands on the drop.
+- *hook line* burns a line of text over the opening. It is drawn with PIL, not
+  ffmpeg's `drawtext`, whose escaping breaks on ordinary punctuation, and it sits
+  at 30% height, clear of Instagram's caption, audio credit and action rail.
+- *cover still* writes a 1080x1920 JPEG of one shot, with the hook, beside the
+  reel. A frame grab of a Ken Burns shot is mid-zoom; this is exact.
+- **Export as carousel** turns the same picked stills into numbered 4:5 or 1:1
+  JPEG slides. One size for the whole set, because Instagram crops every slide
+  to the first slide's ratio.
+
+## Sweeps
+
+A **sweep** is a parameter grid queued as one request: every cell times every
+seed, all in one batch, so the mailer sends one email. Seeds are fixed and
+shared across cells, so a difference between cells is the parameter rather
+than the noise. `POST /api/sweeps` validates every cell before writing any.
+
+```sh
+python3 tools/stage_sweep.py tools/sweeps/upscale-hair-lettering.json
+```
+
+Results are at **`/sweeps.html`** (linked from the header): each style-match
+pass 1 beside its pass 2, ranked by distance from the reference's look using
+`app/score.py`, the metrics behind `tools/compare.py`. The scores rank
+candidates; they do not judge them. Look at the images.
+
 ### Ken Burns gotcha
 
 `zoompan`'s `d` is how many output frames each *input* frame becomes. With a

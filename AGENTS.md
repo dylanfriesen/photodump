@@ -50,8 +50,11 @@ and the schema is only created at startup, so the app 500s until restarted.
 - **`MAX_ATTEMPTS = 5`** — a sleeping PC and a ComfyUI crashing on one specific
   graph are indistinguishable from kanto. Without the cap the second loops
   forever.
-- **Reel and delivery jobs never gate on node health** — they run on kanto with
-  ffmpeg and must work while the desktop is off.
+- **Reel, delivery and carousel jobs never gate on node health** — they run on
+  kanto with ffmpeg/PIL and must work while the desktop is off. A new kanto-side
+  workflow must be added to the `IN (...)` list in `worker._claim`, or it waits
+  forever for a node it never uses.
+- **Sweep cells share fixed seeds.** Without that a sweep compares noise.
 - **WAN frame count must be 4n+1**, or the final chunk degrades silently.
 - **Workflow JSON node ids are API.** `comfy.py` indexes graphs by string key.
   Renumber a graph and the builder breaks with a `KeyError` that surfaces as a
@@ -70,10 +73,19 @@ nobody notices.
   `restart` ships nothing, and a stale image has wasted time three times now.
 - `data/` and `.env` are gitignored. The repo is **public** — no personal
   addresses or credentials in tracked files.
-- Tests: `./tools/smoke.sh` (43 assertions, no GPU, ~12 min) and
-  `python -m unittest tools.test_images tools.test_mailer tools.test_progress`,
+- Tests: `./tools/smoke.sh` (43 assertions, no GPU, ~12 min),
+  `./tools/ui_check.sh` (76 browser checks on seeded data, ~3 min, screenshots
+  in `/tmp/photodump-ui-check/`), and
+  `python -m unittest tools.test_images tools.test_mailer tools.test_progress tools.test_design_api tools.test_staging tools.test_reels`,
   run with `tools/` mounted since the image does not ship it:
   `docker run --rm -v $PWD/app:/srv/app:ro -v $PWD/tools:/srv/tools:ro -e DATA_DIR=/tmp/t -w /srv photodump-photodump python -m unittest ...`
+- **Backups:** `tools/backup.sh` from cron at 06:15 (after the night drain) snapshots the database and
+  hardlinks `refs/` and `out/` into `data/backups/YYYY-MM-DD/`, keeping 14 days.
+  To restore, stop the app and copy a snapshot's `photodump.db` back. Hardlinks
+  survive deletion, not disk failure — this is not an off-box copy.
+- **Night drain:** `desktop/` holds the scheduled task that wakes the desktop
+  at 03:00, lets the queue empty and sleeps it again. Install from kanto with
+  `tools/install-night-drain.sh`.
 
 ## Recipes
 

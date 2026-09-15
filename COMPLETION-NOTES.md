@@ -1,3 +1,23 @@
+# Photodump continuation — September 15, 2026
+
+**Start here.** Nothing below needed the GPU. It is all live on kanto.
+
+- **Next desktop wake:** kanto installs the 03:00 night-drain task over SSH.
+  Check `~/.photodump-night-drain-install.log` for the `powercfg /a` output and
+  the self-test lines.
+- **Next render session**, which should now be the first night after that:
+  sweep `upscale-hair-lettering-1` renders. Open `/sweeps.html`, look at the
+  pass-2 column per cell, and write the verdict into RECIPES.md. It decides
+  pixel vs latent upscaling, whether pass-2-only hair tags reach blonde, and
+  whether the lettering fill leaves a smear.
+- **New and verified without a GPU:** backups (first snapshot taken), reel
+  hook/cover/offset/carousel, the crossfade music-fade fix, the results page.
+  Tests: 70 unit, 43 smoke, 76 browser (`tools/ui_check.sh`).
+- **Header:** the design's "settings" slot now links to sweeps. There is no
+  settings screen, so nothing was lost.
+
+---
+
 # Photodump continuation — September 14, 2026
 
 ## September design implemented

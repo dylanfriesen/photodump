@@ -142,6 +142,17 @@ boxed out; `count: 2` per cell): the recipe above plus `hires: true` and
 `second_pass_prompt_add: "platinum blonde hair"`, varying only `hires_method`
 and `hires_denoise`.
 
+**Queued 2026-09-15 as sweep `upscale-hair-lettering-1`**
+(`tools/sweeps/upscale-hair-lettering.json`). Seven cells: no clean-up/no
+upscale, clean-up/no upscale, pixel 0.25/0.35/0.45, latent 0.45/0.55. Each has
+two fixed seeds, the ones jobs 69 and 70 used. The platinum-blonde tag and the
+dark-hair negatives are **pass 2 only**, which is the hair question as posed.
+The first two cells isolate the lettering fill from the upscale. The nine boxes
+were drawn on ref 4 and checked through `/clean-preview`: every letter goes.
+The two boxes that overlap the thigh and hair tips leave a soft colour smear,
+and whether that survives the render is part of what the sweep answers. Read the
+results at `/sweeps.html`, then record the verdict here.
+
 ### Implementation
 
 `second_pass` / `second_pass_denoise` in `app/main.py`; the chaining lives in

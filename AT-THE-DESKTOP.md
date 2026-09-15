@@ -1,5 +1,23 @@
 # Do these at the desktop
 
+**2026-09-15: most of this no longer needs you at the desktop.**
+
+- **The desktop wakes itself at 03:00** once the night-drain task is installed
+  (`desktop/`). It asks kanto whether anything is queued, stays awake while the
+  queue drains, and suspends again. It never suspends a PC that was already
+  awake, or one someone touched during the run. kanto installs it over SSH by
+  itself the next time the desktop is on: a `--auto` cron entry retries every
+  15 minutes and removes itself once the install confirms. Log:
+  `~/.photodump-night-drain-install.log` on kanto, `C:\ComfyUI\night-drain.log`
+  on the desktop. Undo: `C:\ComfyUI\uninstall-night-drain.ps1`.
+  **Unproven until the first real night.** Whether the board honours the wake
+  timer depends on its sleep state. The installer prints `powercfg /a`; S3 is
+  good, and Modern Standby may ignore the timer.
+- **The image experiments are queued**, as sweep `upscale-hair-lettering-1`
+  (7 cells x 2 seeds, 28 renders). They render on the next wake. Results are at
+  `https://kanto.tail4f3755.ts.net:8452/sweeps.html#upscale-hair-lettering-1`,
+  and the whole grid arrives as one email.
+
 **Status correction, 2026-09-13:** the LTX export below is **done** —
 `app/workflows/ltx_i2v.json` exists, is wired into `VIDEO_BACKENDS`, and job 49
 rendered through it (`data/out/49_0_0.mp4`: 544x960 H.264 + AAC, 89 frames,

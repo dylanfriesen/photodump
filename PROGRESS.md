@@ -12,6 +12,48 @@ is the current handoff; `AT-THE-DESKTOP.md` is what needs doing in person.
 
 ---
 
+## 2026-09-15
+
+**Everything that could be done without the GPU, staged so the next wake does the rest**
+
+**Why.** Every open question needs renders, and renders only happened when
+Dylan sat at the desktop. So this makes the desktop wake itself, queues the
+experiments so they answer themselves, and uses the idle GPU time to harden
+the kanto side.
+
+- **Night drain** (`5f5473f`). A 03:00 WakeToRun task drains the queue and
+  suspends the PC again, with guards against suspending a machine someone is
+  using. kanto installs it over SSH when the desktop next answers; a cron
+  entry retries every 15 minutes and removes itself.
+- **Sweeps** (`d678a2d`). `POST /api/sweeps`, fixed seeds, a scored results
+  page. RECIPES.md's suggested grid is queued on live as
+  `upscale-hair-lettering-1`: jobs 75-88, 28 renders with the second passes.
+- **Backups** (`3f3a7ea`). Nightly at 06:15. The first snapshot was taken by
+  hand: 74 jobs and 66 images. Hardlinks mean `du` on `data/` stayed at 73M.
+- **Reels** (`e2a585c`). Fixed the crossfade music cut-off. Added a track
+  offset, a hook line, a cover still and carousel export.
+- **Browser checks kept** (`9801455`). 76 checks, up from Codex's 53, which
+  had lived only in /tmp.
+
+**What it cost.** Codex's browser checks survived but their fixture did not,
+so the data had to be rebuilt from the assertions (reuse strips
+`CONFIG.negative`, pairing needs a shared batch). The first hook-text test
+averaged the pixel difference over the whole frame, where a short word
+barely moves the mean (0.97 against a 1.0 threshold). It counts changed
+pixels now. Re-reading the PowerShell for 5.1 found two failures that pwsh 7
+parsing cannot catch: `[uint32]'0x80000000'` is a negative Int32 in 5.1, and
+5.1 may offer TLS 1.0 to a 1.2-only tailscale serve endpoint. Both fixed, and
+the installer now finishes with a real `-NoSleep` run so the next such bug
+shows up at install, not at 3am. The lettering boxes were drawn by eye on ref
+4; two overlap the subject and smear skin and hair colour into the fill.
+
+**Unproven.** The night drain has never run on Windows. Whether the board
+honours wake timers depends on its sleep state, and the installer prints
+`powercfg /a`. None of the 28 sweep renders exist yet, so every image-quality
+question in RECIPES.md is still open. Hook text uses DejaVu Sans Bold, which
+reads cleanly on a real render but was chosen for being in Debian, not for
+looks. Uploading a carousel to Instagram has not been tried.
+
 ## 2026-09-14
 
 **Finish the September design port.** Claude had imported the v2 artboards and
@@ -511,3 +553,9 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `5981316` 2026-09-11 14:28 (dylan) — Record the image recipe so another session can pick it up
 - `9703f9e` 2026-09-13 15:17 (dylan) — Audit saved style-match renders; add a render-vs-reference scorer
 - `f2c2427` 2026-09-13 15:54 (dylan) — Build the four open image fixes as far as kanto can take them
+- `21d343d` 2026-09-15 10:08 (dylan) — Implement the September v2 design
+- `3f3a7ea` 2026-09-15 11:06 (dylan) — Back up the database and every file it points at, nightly
+- `d678a2d` 2026-09-15 11:07 (dylan) — Add parameter sweeps: fixed seeds, a grid API and a scored results page
+- `e2a585c` 2026-09-15 11:07 (dylan) — Reels: fix the music fade on crossfades; add track offset, hook line, cover, carousel
+- `9801455` 2026-09-15 11:07 (dylan) — Keep the browser checks: tools/ui_check.sh, 76 checks on seeded data
+- `5f5473f` 2026-09-15 11:11 (dylan) — Wake the render node at 03:00 to drain the queue, then sleep it again
