@@ -54,6 +54,17 @@ question in RECIPES.md is still open. Hook text uses DejaVu Sans Bold, which
 reads cleanly on a real render but was chosen for being in Debian, not for
 looks. Uploading a carousel to Instagram has not been tried.
 
+**ZZZ set queued as sweep `zzz-characters-1`** (jobs 89-108, after the
+upscale sweep). It is page content and also a recognition test: 10 characters
+with identical scene tags, so a generic render means the checkpoint does not
+know that character. Nobody has trained anything in this project. The
+checkpoint is used as shipped, and the "learning" so far is recipes settled
+by sweeps. Danbooru post counts before 2024-10 predict which characters it
+knows. Evelyn Chevalier has zero and is the control, and a failure there is
+the concrete case for a character LoRA. **Unproven:** the actual cutoff of
+waiNSFWIllustrious_v14, and whether the queue drains inside one night (48
+renders ahead of it with the upscale sweep, times unmeasured).
+
 ## 2026-09-14
 
 **Finish the September design port.** Claude had imported the v2 artboards and
@@ -559,3 +570,5 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `e2a585c` 2026-09-15 11:07 (dylan) — Reels: fix the music fade on crossfades; add track offset, hook line, cover, carousel
 - `9801455` 2026-09-15 11:07 (dylan) — Keep the browser checks: tools/ui_check.sh, 76 checks on seeded data
 - `5f5473f` 2026-09-15 11:11 (dylan) — Wake the render node at 03:00 to drain the queue, then sleep it again
+- `b206b96` 2026-09-15 11:16 (dylan) — Record the GPU-free staging: progress, handoff, recipes, desktop notes
+- `ae0e77b` 2026-09-15 11:28 (dylan) — Stage a Zenless Zone Zero set as a character-recognition sweep
