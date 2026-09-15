@@ -65,6 +65,17 @@ the concrete case for a character LoRA. **Unproven:** the actual cutoff of
 waiNSFWIllustrious_v14, and whether the queue drains inside one night (48
 renders ahead of it with the upscale sweep, times unmeasured).
 
+**LoRA support.** Nothing had ever been trained, and the ZZZ sweep's
+probably-unknown characters need a way in, so any image job can now load up
+to four LoRAs. The rewiring works by checkpoint output rather than by naming
+nodes, so both samplers of every hires graph and the IP-Adapter loader pick
+it up. The browser checks caught a bug in their own first version: they
+cleared the rows through the function that saves them, which overwrote the
+localStorage copy under test. **Cost worth knowing:** the offline LoRA list
+only exists after kanto has seen the node awake once since this deploy, so
+until the next wake the picker says "node list not seen yet". **Unproven:**
+no real LoRA has been loaded on the RX 9070, and none is installed.
+
 ## 2026-09-14
 
 **Finish the September design port.** Claude had imported the v2 artboards and
@@ -572,3 +583,5 @@ text regions (much reduced in job 70 but not gone), plain backgrounds, and
 - `5f5473f` 2026-09-15 11:11 (dylan) — Wake the render node at 03:00 to drain the queue, then sleep it again
 - `b206b96` 2026-09-15 11:16 (dylan) — Record the GPU-free staging: progress, handoff, recipes, desktop notes
 - `ae0e77b` 2026-09-15 11:28 (dylan) — Stage a Zenless Zone Zero set as a character-recognition sweep
+- `672c27d` 2026-09-15 11:28 (dylan) — Record the ZZZ sweep and the no-training finding
+- `b4703b8` 2026-09-15 11:46 (dylan) — Add LoRA support to every image job
