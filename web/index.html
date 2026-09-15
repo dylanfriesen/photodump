@@ -225,6 +225,21 @@
                 <input id="cfg" class="mono-in" type="number" step="0.5" min="1" max="12" value="5"></label>
               <label class="f"><span class="cap">checkpoint</span><select id="checkpoint" class="mono-in"></select></label>
             </div>
+            <!-- LoRAs ride along with the sampler, so Create, Fuse and Extend
+                 all use the same set. Rows are built by loraRow() in app.js. -->
+            <div class="body lora-body">
+              <div class="caprow">
+                <span class="cap">LoRAs</span>
+                <span class="spacer"></span>
+                <span class="meta" id="lora-meta"></span>
+              </div>
+              <div id="lora-rows"></div>
+              <datalist id="lora-list"></datalist>
+              <div class="lora-foot">
+                <button class="linkbtn" id="lora-add" type="button">+ add a LoRA</button>
+                <span class="hint">Put its trigger words in the prompt. Files go in <code>ComfyUI/models/loras</code> on the desktop.</span>
+              </div>
+            </div>
           </details>
         </div>
 

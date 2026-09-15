@@ -22,6 +22,9 @@ let CR_REFS = [];      // ordered reference ids for the Create task
 let CR_REF_ROWS = [];  // the reference records behind the picker
 const CR_CLEAN = {};   // ref id -> [[x, y, w, h], ...] fractions to fill before img2img
 const NODE_CAPS = { has_ipadapter: true };   // until /api/node says otherwise
+let LORA_KNOWN = null;   // LoRA files the node lists (live or cached); null = never seen
+const LORA_KEY = 'photodump.loras';
+const MAX_LORAS = 4;     // mirrors main.MAX_LORAS
 let CREATE_BUSY = false;    // a generate request is in flight
 let CREATE_BLOCKED = false; // the resolved workflow cannot run on this node
 let IMAGES = [];      // normalised tiles currently in the grid
@@ -172,6 +175,7 @@ async function boot() {
   $('node-bars').innerHTML = [0, 1, 2, 3, 4].map((i) => `<i style="height:${6 + i * 2}px"></i>`).join('');
 
   restoreForm();
+  restoreLoras();
   // Selects and checkboxes fire change, not input - listening to only one
   // meant those fields were never persisted.
   REMEMBER.forEach((id) => {
@@ -389,7 +393,16 @@ async function refreshPreflight() {
 
 async function probeNode() {
   const { ok, body } = await api('/api/node');
-  if (!ok) return;
+  // Offline answers carry the last list the node gave, so LoRAs can still be
+  // picked while the desktop sleeps. With no cache there is nothing to show.
+  if (!ok && !body?.cached_at) return;
+  if (Array.isArray(body.loras)) {
+    LORA_KNOWN = body.loras;
+    $('lora-list').innerHTML = body.loras.map((l) => `<option value="${esc(l)}"></option>`).join('');
+    $('lora-meta').textContent = `${body.loras.length} installed` +
+      (ok ? '' : ` · list from ${ago(body.cached_at)}`);
+    syncLoras();
+  }
   if (body.checkpoints?.length) {
     const selected = $('checkpoint').value;
     $('checkpoint').innerHTML = '<option value="">default</option>' +
@@ -408,6 +421,69 @@ async function probeNode() {
   syncCreate();
 }
 
+/* ---------- LoRAs ----------
+   Rows of [file, strength, remove]. The file box is free text backed by a
+   datalist: the desktop is usually asleep, so the installed list may be stale
+   or never seen, and a name typed ahead of installing the file must still be
+   queueable. A name the node does not list gets a warning, not a block. */
+function loraRow(name = '', strength = 0.8) {
+  if ($('lora-rows').children.length >= MAX_LORAS) return;
+  const row = document.createElement('div');
+  row.className = 'lora-row';
+  row.innerHTML = `
+    <input type="text" class="mono-in lora-name" list="lora-list" placeholder="file.safetensors" aria-label="LoRA file" autocomplete="off">
+    <input type="number" class="mono-in lora-strength" step="0.05" min="-2" max="2" aria-label="LoRA strength">
+    <button type="button" class="lora-x" aria-label="remove LoRA">&times;</button>
+    <span class="lora-warn" hidden>not in the node's list</span>`;
+  row.querySelector('.lora-name').value = name;
+  row.querySelector('.lora-strength').value = strength;
+  $('lora-rows').appendChild(row);
+}
+
+function loraValues() {
+  return [...$('lora-rows').querySelectorAll('.lora-row')]
+    .map((r) => ({ name: r.querySelector('.lora-name').value.trim(),
+                   strength: +r.querySelector('.lora-strength').value || 0 }))
+    .filter((l) => l.name);
+}
+
+function setLoras(list) {
+  $('lora-rows').replaceChildren();
+  (list || []).slice(0, MAX_LORAS).forEach((l) => loraRow(l.name, l.strength ?? 0.8));
+  syncLoras();
+}
+
+function syncLoras() {
+  const rows = [...$('lora-rows').querySelectorAll('.lora-row')];
+  $('lora-add').hidden = rows.length >= MAX_LORAS;
+  for (const r of rows) {
+    const name = r.querySelector('.lora-name').value.trim();
+    r.querySelector('.lora-warn').hidden = !(LORA_KNOWN && name && !LORA_KNOWN.includes(name));
+  }
+  if (!LORA_KNOWN) $('lora-meta').textContent = 'node list not seen yet';
+  try { localStorage.setItem(LORA_KEY, JSON.stringify(loraValues())); } catch { /* storage off */ }
+  syncCounts();
+}
+
+function restoreLoras() {
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem(LORA_KEY) || '[]'); } catch { /* ignore */ }
+  setLoras(Array.isArray(saved) ? saved.filter((l) => l && typeof l.name === 'string') : []);
+}
+
+$('lora-add').onclick = () => {
+  loraRow();
+  syncLoras();
+  $('lora-rows').lastElementChild?.querySelector('.lora-name').focus();
+};
+$('lora-rows').addEventListener('input', syncLoras);
+$('lora-rows').addEventListener('click', (e) => {
+  const x = e.target.closest('.lora-x');
+  if (!x) return;
+  x.closest('.lora-row').remove();
+  syncLoras();
+});
+
 /* ---------- form ---------- */
 function formValues() {
   return {
@@ -424,6 +500,7 @@ function formValues() {
     ip_weight: +$('ip-weight').value,
     workflow: $('workflow').value || null,
     checkpoint: $('checkpoint').value || null,
+    loras: loraValues(),
     ref_id: $('ref').value ? +$('ref').value : null,
   };
 }
@@ -441,7 +518,9 @@ function syncCounts() {
   badge.textContent = `${off} set`;
   // Collapsed, the sampler still says what it is set to.
   const ckpt = $('checkpoint').value.replace(/\.safetensors$/, '') || 'default checkpoint';
-  $('sampler-sum').textContent = `${$('steps').value} · ${$('cfg').value} · ${ckpt}`;
+  const loras = loraValues().length;
+  $('sampler-sum').textContent = `${$('steps').value} · ${$('cfg').value} · ${ckpt}` +
+    (loras ? ` · ${loras} LoRA${loras === 1 ? '' : 's'}` : '');
 }
 
 /* One sampler serves Create, Fuse and Extend. It is a single DOM node moved
@@ -796,6 +875,7 @@ function createValues() {
     steps: +$('steps').value,
     cfg: +$('cfg').value,
     checkpoint: $('checkpoint').value || null,
+    loras: loraValues(),
   };
   if (CR_REFS.length) {
     const mode = resolvedCreateMode();
@@ -846,6 +926,7 @@ $('btn-cr-preview').onclick = () => {
         (v.second_pass_negative_add ? `\n  pass 2 avoids: ${v.second_pass_negative_add}` : '') +
         (v.clean_regions ? `\n  ${v.clean_regions.length} region(s) filled out of the reference first` : '')
       : '') +
+    (v.loras.length ? `\n\nLoRAs \u00b7 ${v.loras.map((l) => `${l.name} @ ${l.strength}`).join(', ')}` : '') +
     (v.hires ? `\n\nupscaled 1.5\u00d7${v.second_pass ? ' on the final pass' : ''} in a refine pass` : '') +
     `\n\nplan \u00b7 ${plan} \u00b7 ${$('cr-aspect').querySelector('span.on')?.textContent || v.aspect} \u00b7 \u00d7${v.count}` +
     (v.second_pass ? ' \u00b7 two passes each' : '');
@@ -1311,6 +1392,7 @@ $('btn-extend').onclick = async (e) => {
     feathering: +$('ex-feather').value,
     steps: +$('steps').value, cfg: +$('cfg').value,
     checkpoint: $('checkpoint').value || null,
+    loras: loraValues(),
   }, (ids) => `Queued ${ids.length} extend${ids.length === 1 ? '' : 's'} · #${ids[0]}`);
   btn.disabled = false;
 };
@@ -1656,6 +1738,7 @@ function openLightbox(img) {
       $('checkpoint').add(new Option(checkpoint, checkpoint));
     }
     $('checkpoint').value = checkpoint;
+    setLoras(params.loras || []);
     if (create) {
       $('cr-prompt').value = img.prompt || '';
       $('cr-quality').checked = false; // saved prompt already contains its quality tags

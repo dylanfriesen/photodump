@@ -55,6 +55,11 @@ and the schema is only created at startup, so the app 500s until restarted.
   workflow must be added to the `IN (...)` list in `worker._claim`, or it waits
   forever for a node it never uses.
 - **Sweep cells share fixed seeds.** Without that a sweep compares noise.
+- **Node `"4"` is the checkpoint in every SDXL graph, and ids 40+ are reserved
+  for LoRA loaders.** `comfy.apply_loras` rewires every `["4", 0]` / `["4", 1]`
+  input through them. A new image graph must keep the checkpoint at `"4"` and
+  leave 40–43 free, or LoRAs silently bypass it; the unit test walks every
+  graph to catch that.
 - **WAN frame count must be 4n+1**, or the final chunk degrades silently.
 - **Workflow JSON node ids are API.** `comfy.py` indexes graphs by string key.
   Renumber a graph and the builder breaks with a `KeyError` that surfaces as a
@@ -73,10 +78,10 @@ nobody notices.
   `restart` ships nothing, and a stale image has wasted time three times now.
 - `data/` and `.env` are gitignored. The repo is **public** — no personal
   addresses or credentials in tracked files.
-- Tests: `./tools/smoke.sh` (43 assertions, no GPU, ~12 min),
-  `./tools/ui_check.sh` (76 browser checks on seeded data, ~3 min, screenshots
+- Tests: `./tools/smoke.sh` (47 assertions, no GPU, ~12 min),
+  `./tools/ui_check.sh` (84 browser checks on seeded data, ~3 min, screenshots
   in `/tmp/photodump-ui-check/`), and
-  `python -m unittest tools.test_images tools.test_mailer tools.test_progress tools.test_design_api tools.test_staging tools.test_reels`,
+  `python -m unittest tools.test_images tools.test_mailer tools.test_progress tools.test_design_api tools.test_staging tools.test_reels tools.test_loras`,
   run with `tools/` mounted since the image does not ship it:
   `docker run --rm -v $PWD/app:/srv/app:ro -v $PWD/tools:/srv/tools:ro -e DATA_DIR=/tmp/t -w /srv photodump-photodump python -m unittest ...`
 - **Backups:** `tools/backup.sh` from cron at 06:15 (after the night drain) snapshots the database and

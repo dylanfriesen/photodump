@@ -303,5 +303,24 @@ check "LTX params with no workflow -> 400" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/generate -H 'Content-Type: application/json' \
       -d "{\"prompt\":\"x\",\"ref_ids\":[$SREF],\"video_backend\":\"ltx\",\"video_size\":\"story_hd\"}")" "400"
 
+say "18. LoRAs: an installed one renders through LoraLoader, an unknown one fails fast"
+start_mock --latency 1
+for _ in $(seq 1 12); do
+  [ "$(curl -s $B/api/status | field "d['online']")" = "True" ] && break
+  sleep 3
+done
+check "node list includes LoRAs (new COMBO schema)" \
+  "$(curl -s $B/api/node | field "','.join(d.get('loras', []))")" "zzz/evelyn_chevalier_il.safetensors,retro_cel_style.safetensors"
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"prompt":"lora smoke ok","loras":[{"name":"retro_cel_style.safetensors","strength":0.7}]}' >/dev/null
+curl -s -X POST $B/api/generate -H 'Content-Type: application/json' \
+  -d '{"prompt":"lora smoke missing","loras":[{"name":"not_installed.safetensors","strength":1}]}' >/dev/null
+wait_for "any(j['status']=='done' and j['prompt'].endswith('lora smoke ok') for j in jobs) and any(j['status']=='failed' and j['prompt'].endswith('lora smoke missing') for j in jobs)" 90 \
+  && ok "installed LoRA rendered, unknown LoRA failed" || bad "LoRA jobs did not settle as expected"
+check "unknown LoRA failed on the first attempt, not requeued" \
+  "$(curl -s $B/api/jobs | field "[j['attempts'] for j in d if j['prompt'].endswith('lora smoke missing')][0]")" "1"
+check "mock saw the LoRA wired into the sampler" \
+  "$(docker logs mock-comfy 2>&1 | grep -c "loras=retro_cel_style.safetensors sampler_model=\['40', 0\]")" "1"
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

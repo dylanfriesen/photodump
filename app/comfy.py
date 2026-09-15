@@ -58,19 +58,33 @@ async def object_info() -> dict:
         raise ComfyOffline(str(e)) from e
 
 
-async def available() -> dict:
-    """Checkpoints the node actually has, and whether IP-Adapter nodes exist."""
-    info = await object_info()
+def combo_options(info: dict, node: str, field: str) -> list[str] | None:
+    """The choices a loader offers, or None if the node or field is absent.
 
-    ckpts = []
-    node = info.get("CheckpointLoaderSimple", {})
+    ComfyUI publishes combo inputs in two shapes. The old one is
+    `[[choice, ...], {...}]`; newer loaders use `["COMBO", {"options": [...]}]`.
+    Reading only the first shape rendered the new one as a bare "COMBO", which
+    was once reported as "no upscale models installed" when they were there.
+    """
     try:
-        ckpts = node["input"]["required"]["ckpt_name"][0]
-    except (KeyError, IndexError, TypeError):
-        pass
+        spec = info[node]["input"]["required"][field]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(spec, list) or not spec:
+        return None
+    if isinstance(spec[0], list):
+        return list(spec[0])
+    if spec[0] == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
+        return list(spec[1].get("options") or [])
+    return None
 
+
+async def available() -> dict:
+    """Checkpoints and LoRAs the node actually has, and whether IP-Adapter exists."""
+    info = await object_info()
     return {
-        "checkpoints": ckpts,
+        "checkpoints": combo_options(info, "CheckpointLoaderSimple", "ckpt_name") or [],
+        "loras": combo_options(info, "LoraLoader", "lora_name") or [],
         "has_ipadapter": "IPAdapterUnifiedLoader" in info,
         "node_count": len(info),
     }
@@ -176,6 +190,50 @@ def _chain_references(wf: dict, ref_names: list[str]) -> None:
                      "inputs": {"image1": [prev, 0], "image2": [load, 0]}}
         prev = batch
     wf["13"]["inputs"]["image"] = [prev, 0]
+
+
+CHECKPOINT_NODE = "4"     # every SDXL graph loads its checkpoint here
+LORA_NODE_BASE = 40       # LoRA loaders get ids 40, 41, ... (free in every graph)
+
+
+def apply_loras(wf: dict, loras: list | None) -> None:
+    """Chain LoraLoader nodes after the checkpoint and route everything through them.
+
+    A LoRA patches both halves of the checkpoint: the diffusion model (what it
+    draws) and the CLIP text encoder (what its trigger words mean). So each
+    loader takes MODEL and CLIP from the one before it, and every node in the
+    graph that read MODEL (output 0) or CLIP (output 1) straight from the
+    checkpoint is rewired to the last loader. VAE (output 2) is untouched.
+
+    Rewiring by output rather than naming consumers keeps this graph-agnostic:
+    both KSamplers of a hires graph, and the IP-Adapter loader, pick up the
+    LoRA without this function knowing they exist. LoRAs therefore apply
+    beneath IP-Adapter, which is the order the pack expects.
+    """
+    if not loras:
+        return
+    ids = [str(LORA_NODE_BASE + i) for i in range(len(loras))]
+    collide = [i for i in ids if i in wf]
+    if collide:
+        raise ComfyError(f"LoRA node ids {collide} already exist in this graph")
+    for node in wf.values():
+        for key, value in node["inputs"].items():
+            if (isinstance(value, list) and len(value) == 2
+                    and value[0] == CHECKPOINT_NODE and value[1] in (0, 1)):
+                node["inputs"][key] = [ids[-1], value[1]]
+    prev = CHECKPOINT_NODE
+    for node_id, lora in zip(ids, loras):
+        strength = float(lora.get("strength", 1.0))
+        wf[node_id] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "model": [prev, 0], "clip": [prev, 1],
+                "lora_name": lora["name"],
+                "strength_model": strength,
+                "strength_clip": float(lora.get("strength_clip", strength)),
+            },
+        }
+        prev = node_id
 
 
 def build(prompt: str, negative: str, params: dict,
@@ -286,6 +344,7 @@ def build(prompt: str, negative: str, params: dict,
                 wf["10"]["inputs"]["image"] = ref_name
 
     wf["3"]["inputs"] = k
+    apply_loras(wf, params.get("loras"))
     return wf, seed
 
 
@@ -439,6 +498,7 @@ NODE_STAGES = {
     "CreateVideo": "assembling video and audio",
     "SaveVideo": "saving video",
     "CheckpointLoaderSimple": "loading checkpoint",
+    "LoraLoader": "loading LoRA",
     "UNETLoader": "loading model",
     "CLIPLoader": "loading text encoder",
     "VAELoader": "loading VAE",

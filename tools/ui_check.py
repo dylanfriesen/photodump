@@ -120,6 +120,7 @@ check("lightbox count reads 'of'", "(()=>{openLightbox(IMAGES[0]);return $('lb-p
 check("lightbox paging", "(()=>{stepLightbox(1);return $('lb-pos').textContent==='2 of 5'})()")
 check("input arrows stay in input", "(()=>{const key=CURRENT.key;$('an-prompt').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));return CURRENT.key===key})()")
 check("create settings reuse", "(()=>{openLightbox(IMAGES.find(i=>i.id===1));$('lb-reuse').click();return $('cr-prompt').value==='A quiet illustrated portrait' && $('steps').value==='40' && $('cr-denoise').value==='0.45' && CR_REFS.join()==='1' && $('cr-stylematch').checked && CR_CLEAN[1].length===1})()")
+check("reuse restores the LoRAs", "(()=>{const l=loraValues();return l.length===1 && l[0].name==='fixture_style.safetensors' && l[0].strength===0.6 && $('sampler-sum').textContent.includes('1 LoRA')})()")
 check("preview plan", "(()=>{$('btn-cr-preview').click();return !$('cr-preview-box').hidden && $('cr-preview').textContent.includes('two passes each')})()")
 check("negative added once on reuse", "$('cr-negative').value==='text, watermark'")
 check("gallery media retained", "(async()=>{await refreshGallery();const first=$('grid').firstElementChild;await refreshGallery();return first===$('grid').firstElementChild})()")
@@ -129,6 +130,19 @@ check("model keyboard selects", "(()=>{$('an-backend').querySelector('[data-valu
 check("six canvases", "$('an-size').querySelectorAll('[data-value]').length===6")
 check("animate real API payload", "(async()=>{$('an-backend').value='ltx';$('an-prompt').value='Slow camera drift';await $('an-go').onclick({currentTarget:$('an-go')});const r=await api('/api/jobs');const p=JSON.parse(r.body[0].params);return p.video_backend==='ltx' && p.video_size==='story_540' && p.workflow==='wan_i2v'})()")
 check("create real API payload", "(async()=>{closeLb();openLightbox(IMAGES.find(i=>i.id===1));$('lb-reuse').click();await $('btn-create').onclick();const r=await api('/api/jobs');const p=JSON.parse(r.body[0].params);return p.second_pass && p.steps===40 && p.clean_regions.length===1})()")
+
+print("loras")
+check("add a LoRA row and it reaches every image payload", "(()=>{$('lora-add').click();const row=$('lora-rows').lastElementChild;row.querySelector('.lora-name').value='zzz/evelyn.safetensors';row.querySelector('.lora-strength').value='0.75';$('lora-rows').dispatchEvent(new Event('input'));const want=JSON.stringify([{name:'fixture_style.safetensors',strength:0.6},{name:'zzz/evelyn.safetensors',strength:0.75}]);return JSON.stringify(createValues().loras)===want && JSON.stringify(formValues().loras)===want && $('sampler-sum').textContent.includes('2 LoRAs')})()")
+check("a name the node does not list is warned, not blocked", "(()=>{LORA_KNOWN=['zzz/evelyn.safetensors'];syncLoras();const w=[...document.querySelectorAll('.lora-warn')].map(e=>e.hidden);return w[0]===false && w[1]===true && !$('btn-create').disabled})()")
+check("the add button stops at four", "(()=>{while($('lora-rows').children.length<4)$('lora-add').click();syncLoras();return $('lora-add').hidden && $('lora-rows').children.length===4})()")
+check("LoRAs survive a reload of the form", "(()=>{syncLoras();const saved=JSON.parse(localStorage.getItem('photodump.loras'));$('lora-rows').replaceChildren();restoreLoras();return saved.length===2 && JSON.stringify(loraValues())===JSON.stringify(saved) && $('lora-rows').children.length===2})()")
+check("remove a LoRA row", "(()=>{$('lora-rows').lastElementChild.querySelector('.lora-x').click();return loraValues().length===1 && loraValues()[0].name==='fixture_style.safetensors'})()")
+evaluate("LORA_KNOWN=['fixture_style.safetensors'];loraRow('not_installed_yet.safetensors',1);syncLoras();$('sampler').open=true;$('sampler').scrollIntoView({block:'center'})")
+time.sleep(.3)
+shot("1440-loras")
+evaluate("$('lora-rows').lastElementChild.remove();syncLoras()")
+check("create preview lists the LoRAs", "(()=>{switchTask('create');$('cr-prompt').value='a test';$('btn-cr-preview').click();return $('cr-preview').textContent.includes('LoRAs · fixture_style.safetensors @ 0.6')})()")
+check("video request with LoRAs is refused by the API", "(async()=>{const r=await api('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'x',workflow:'wan_i2v',ref_ids:[1],loras:[{name:'a',strength:1}]})});return r.status===400})()")
 
 print("queue")
 evaluate('closeLb();switchTab("queue")')
@@ -171,6 +185,10 @@ for width in [390, 768, 1440]:
         check(f"no horizontal overflow {width} {screen}", "document.documentElement.scrollWidth<=window.innerWidth")
         if screen in ("studio", "queue"):
             shot(f"{width}-{screen}")
+        if screen == "studio" and width == 390:
+            evaluate("switchTask('create');$('sampler').open=true;$('sampler').scrollIntoView({block:'center'})")
+            time.sleep(.3)
+            shot("390-loras")
     evaluate("switchScreen('studio');switchTask('reel')")
     time.sleep(.3)
     check(f"reel panel fits {width}", "document.documentElement.scrollWidth<=window.innerWidth")

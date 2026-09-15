@@ -15,6 +15,7 @@ LOADERS = {
     "UNETLoader": "unet_name",
     "CLIPLoader": "clip_name",
     "VAELoader": "vae_name",
+    "LoraLoader": "lora_name",
 }
 
 WORKFLOWS = [
@@ -34,10 +35,7 @@ WORKFLOWS = [
 
 def _options(info: dict, node: str, field: str) -> list[str] | None:
     """The file list a loader offers, or None if the node type is absent."""
-    try:
-        return list(info[node]["input"]["required"][field][0])
-    except (KeyError, IndexError, TypeError):
-        return None
+    return comfy.combo_options(info, node, field)
 
 
 async def run() -> dict:

@@ -40,6 +40,7 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image
 
+MOCK_LORAS = ["zzz/evelyn_chevalier_il.safetensors", "retro_cel_style.safetensors"]
 JOBS = {}
 SOCKETS = {}        # clientId -> Queue of messages to push down the websocket
 ARGS = None
@@ -116,6 +117,8 @@ class Handler(BaseHTTPRequestHandler):
                 "CLIPLoader": {"input": {"required": {"clip_name": [["umt5_xxl_fp16.safetensors"]]}}},
                 "VAELoader": {"input": {"required": {"vae_name": [["wan2.2_vae.safetensors"]]}}},
                 "Wan22ImageToVideoLatent": {}, "SaveWEBM": {},
+                # The newer combo shape, on purpose: the app must read both.
+                "LoraLoader": {"input": {"required": {"lora_name": ["COMBO", {"options": MOCK_LORAS}]}}},
             }
             if not ARGS.no_ipadapter:
                 info["IPAdapterUnifiedLoader"] = {}
@@ -237,6 +240,12 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/prompt":
             graph = json.loads(body).get("prompt", {})
             assert "3" in graph and graph["3"]["class_type"] == "KSampler", "graph has no KSampler"
+            # Real ComfyUI validates combo values at submit and answers 400.
+            for node in graph.values():
+                if node.get("class_type") == "LoraLoader" and node["inputs"]["lora_name"] not in MOCK_LORAS:
+                    print(f"  [mock] reject unknown LoRA {node['inputs']['lora_name']}", flush=True)
+                    return self._send(400, {"error": {"type": "prompt_outputs_failed_validation"},
+                                            "node_errors": {"lora_name": "Value not in list"}})
             pid = uuid.uuid4().hex
             JOBS[pid] = {"t": time.time(), "graph": graph,
                          "client_id": json.loads(body).get("client_id", "")}
@@ -256,6 +265,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _describe(self, pid, graph):
         k = graph["3"]["inputs"]
+        loras = [n["inputs"]["lora_name"] for n in graph.values() if n.get("class_type") == "LoraLoader"]
+        if loras:
+            print(f"  [mock] loras={','.join(loras)} sampler_model={graph['3']['inputs']['model']}", flush=True)
         ckpt = graph.get("4", {}).get("inputs", {}).get("ckpt_name", "-")
         print(f"  [mock] accept {pid[:8]} ckpt={ckpt} seed={k['seed']} steps={k['steps']}", flush=True)
         if "14" in graph:  # ImagePadForOutpaint

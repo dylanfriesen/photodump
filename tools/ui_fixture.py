@@ -37,6 +37,7 @@ for n, colour in [(1, (60, 40, 110)), (2, (200, 180, 120)), (3, (30, 60, 140)),
 create = {"aspect": "portrait", "steps": 40, "cfg": 5.0, "denoise": 0.45, "ip_weight": 0.7,
           "workflow": "img2img", "free_prompt": True, "second_pass": True,
           "second_pass_denoise": 0.65, "hires": False, "clean_regions": [[0.1, 0.8, 0.6, 0.1]],
+          "loras": [{"name": "fixture_style.safetensors", "strength": 0.6}],
           "recipe": {"subject_a": "", "subject_b": "", "mode": "design_fusion", "extra": ""}}
 pass2 = {k: v for k, v in create.items() if k not in ("second_pass", "clean_regions")} | {"denoise": 0.65}
 fuse = {"aspect": "portrait", "steps": 30, "cfg": 5.0, "workflow": None, "free_prompt": False,

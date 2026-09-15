@@ -1,0 +1,18 @@
+{
+  "name": "lora-strength-CHANGE-ME",
+  "_why": "Template, not queued. Copy it once a LoRA is installed on the desktop: set name, the LoRA filename (as ComfyUI lists it; see the Sampler panel), its trigger words in the prompt, then stage with tools/stage_sweep.py. Compares no LoRA against three strengths on shared seeds. Too low and the character drifts back to generic; too high and the LoRA's training images bleed in (same pose, same background, burnt colours). Hires is left off so each cell is quick.",
+  "seeds": [20260915, 777],
+  "base": {
+    "prompt": "TRIGGER WORDS, CHARACTER TAG, zenless zone zero, 1girl, solo, looking at viewer, cowboy shot, city street at night, neon lights, cinematic lighting, detailed background",
+    "negative": "nsfw, nude",
+    "aspect": "portrait",
+    "steps": 30,
+    "cfg": 5.0
+  },
+  "cells": [
+    {"label": "no LoRA", "set": {"loras": []}},
+    {"label": "0.6", "set": {"loras": [{"name": "LORA_FILE.safetensors", "strength": 0.6}]}},
+    {"label": "0.8", "set": {"loras": [{"name": "LORA_FILE.safetensors", "strength": 0.8}]}},
+    {"label": "1.0", "set": {"loras": [{"name": "LORA_FILE.safetensors", "strength": 1.0}]}}
+  ]
+}

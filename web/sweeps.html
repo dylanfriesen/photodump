@@ -117,6 +117,8 @@ async function getJSON(url) {
 
 function chips(set) {
   return Object.entries(set || {}).map(([k, v]) =>
+    k === 'loras' && Array.isArray(v)
+      ? `<span class="chip">${v.length ? v.map((l) => `${esc(l.name).replace(/\.safetensors$/, '')} @ ${esc(l.strength)}`).join(' + ') : 'no LoRA'}</span>` :
     `<span class="chip" title="${esc(k)}=${esc(v)}">${esc(k)}=${esc(Array.isArray(v) ? (v.length ? `${v.length} boxes` : 'none') : String(v).length > 48 ? `${String(v).slice(0, 48)}…` : v)}</span>`).join('');
 }
 

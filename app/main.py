@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import captions, comfy, deliver, imageops, preflight, reels, score, worker
 from .config import ASPECTS, CHECKPOINT, OUT, REFS, THUMBS
-from .db import db, init, loads, rows, set_setting
+from .db import db, init, loads, rows, set_setting, setting
 from .prompts import (MODES, QUALITY, STARTERS, compile_negative, compile_parts,
                       compile_prompt)
 
@@ -56,11 +56,23 @@ async def api_config():
 
 @app.get("/api/node")
 async def api_node():
-    """What the render node actually has installed. Drives UI affordances."""
+    """What the render node has installed. Drives UI affordances.
+
+    The node is asleep most of the time, and a LoRA picker that only works
+    while it is awake is useless for queueing from a phone. So the last
+    successful answer is kept, and an offline response carries it with
+    `cached_at` so the UI can say how old the list is.
+    """
     try:
-        return await comfy.available()
+        caps = await comfy.available()
     except comfy.ComfyOffline as e:
-        return JSONResponse({"offline": True, "error": str(e)}, status_code=503)
+        with db() as conn:
+            cached = loads(setting(conn, "node_caps", ""), {})
+        return JSONResponse({**cached, "offline": True, "error": str(e)}, status_code=503)
+    stamped = {**caps, "cached_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}
+    with db() as conn:
+        set_setting(conn, "node_caps", json.dumps(stamped))
+    return caps
 
 
 @app.get("/api/preflight")
@@ -165,6 +177,48 @@ PUBLIC_WORKFLOWS = {None, "", "txt2img", "img2img", "ipadapter", "ipadapter_mult
 _fill_lock = asyncio.Semaphore(1)
 
 
+MAX_LORAS = 4
+
+
+def _loras(raw) -> list:
+    """Validate [{name, strength[, strength_clip]}] LoRA requests.
+
+    Names are the node's own relative paths (subfolders allowed, `\\` too,
+    since ComfyUI on Windows lists them that way), never `..`. Whether the
+    file is installed is the node's call: it rejects an unknown name at submit
+    with its own message, which fails the job immediately rather than
+    requeueing it. Strength is clamped to ComfyUI's useful range; negative
+    values are legitimate (they push *away* from a LoRA's look).
+    """
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise HTTPException(400, "loras must be a list of {name, strength}")
+    if len(raw) > MAX_LORAS:
+        raise HTTPException(400, f"at most {MAX_LORAS} LoRAs per job")
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise HTTPException(400, "each LoRA must be {name, strength}")
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue                       # an empty picker row, not an error
+        if (len(name) > 255 or name.startswith(("/", "\\"))
+                or ".." in re.split(r"[\\/]", name)):
+            raise HTTPException(400, f"invalid LoRA name {name[:60]!r}")
+        try:
+            strength = float(item.get("strength", 1.0))
+            clip = float(item.get("strength_clip", strength))
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"LoRA {name!r} strength must be a number")
+        clamp = lambda v: round(max(-2.0, min(2.0, v)), 3)  # noqa: E731
+        entry = {"name": name, "strength": clamp(strength)}
+        if clamp(clip) != entry["strength"]:
+            entry["strength_clip"] = clamp(clip)
+        out.append(entry)
+    return out
+
+
 def _regions(raw) -> list:
     """Keep only well-formed [x, y, w, h] fraction boxes; drop the rest."""
     out = []
@@ -265,6 +319,9 @@ def _prepare(payload: dict):
         "hires_method": payload.get("hires_method") or "pixel",
         # [x, y, w, h] fractions of the reference to fill before img2img.
         "clean_regions": _regions(payload.get("clean_regions")),
+        # Applied to every image graph between the checkpoint and its users.
+        # A style-match pass 2 copies params, so it keeps the same LoRAs.
+        "loras": _loras(payload.get("loras")),
         "seconds": float(payload.get("seconds", 3)),
         "fps": int(payload.get("fps", 16)),
         # Fixed seed, for comparisons. None means build() picks one at random.
@@ -306,6 +363,11 @@ def _prepare(payload: dict):
                  "upscaling is `hires: true`, not a workflow name")
     if params["hires_method"] not in ("pixel", "latent"):
         raise HTTPException(400, "hires_method must be 'pixel' or 'latent'")
+    # SDXL LoRAs only fit SDXL graphs. The video models are different
+    # architectures; the builder would silently drop them, so say so instead.
+    if params["loras"] and params["workflow"] == "wan_i2v":
+        raise HTTPException(400, "LoRAs apply to image jobs only; the video models "
+                                 "cannot load an SDXL LoRA")
     return prompt, negative, params, ref_ids
 
 

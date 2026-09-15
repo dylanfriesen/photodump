@@ -187,6 +187,32 @@ sources can be mixed in any order.
   JPEG slides. One size for the whole set, because Instagram crops every slide
   to the first slide's ratio.
 
+## LoRAs
+
+A **LoRA** is a small add-on file (tens to a few hundred MB) that adjusts a
+checkpoint toward one character, outfit or art style. Up to four apply to any
+image job: Create, Fuse, Extend, and both passes of a style match. Add them in
+the **Sampler** panel. Each takes a strength, usually 0.6–1.0. Negative values
+push *away* from the LoRA's look.
+
+- **Install:** put the `.safetensors` file in `ComfyUI/models/loras` on the
+  desktop (subfolders are fine). It must be an SDXL / Illustrious LoRA; an
+  SD1.5 or Flux LoRA will not load into this checkpoint.
+- **Trigger words:** most character LoRAs are trained on a keyword. Put it in
+  the prompt, or the LoRA does little.
+- **Picking while the desktop sleeps:** kanto keeps the node's last LoRA list
+  (`/api/node` returns it with `cached_at`). A typed name the list doesn't have
+  is warned about, not blocked, so a LoRA can be queued before it is installed.
+  An uninstalled name fails that job the moment it reaches the node, and does
+  not requeue.
+- **How it is wired:** `comfy.apply_loras` chains `LoraLoader` nodes (ids 40+)
+  after the checkpoint and reroutes every MODEL and CLIP consumer through the
+  last one. That covers both samplers of a hires graph and places LoRAs beneath
+  IP-Adapter. Video graphs are a different architecture; `/api/generate` refuses
+  LoRAs on them.
+
+To find the right strength, sweep it: `tools/sweeps/lora-strength.template.json`.
+
 ## Sweeps
 
 A **sweep** is a parameter grid queued as one request: every cell times every
